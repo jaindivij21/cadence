@@ -20,8 +20,14 @@ struct PillView: View {
     /// Two chips at most, or the actions get squeezed out.
     private var shownCompanions: [Reminder] { Array(companions.prefix(2)) }
 
-    private var width: CGFloat {
-        shownCompanions.isEmpty ? 560 : 560 + CGFloat(shownCompanions.count) * 116
+    private var width: CGFloat { 560 }
+
+    /// One line covering the whole stop. The single Done answers for all of it,
+    /// so there is nothing to tick off separately.
+    private var line: String {
+        let base = progress ?? reminder.detail
+        guard !shownCompanions.isEmpty else { return base }
+        return base + "  ·  Also: " + shownCompanions.map(\.name).joined(separator: ", ")
     }
 
     var body: some View {
@@ -42,25 +48,7 @@ struct PillView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            ForEach(shownCompanions) { companion in
-                let taken = answeredCompanions.contains(companion.id)
-                Button {
-                    onCompanion(companion)
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: taken ? "checkmark" : companion.symbol)
-                            .font(.ui(10, .semibold))
-                        Text(companion.name)
-                            .lineLimit(1)
-                    }
-                }
-                .buttonStyle(.bordered)
-                .tint(companion.category.color)
-                .disabled(taken)
-                .fixedSize()
-            }
-
-            Button(reminder.actionLabel, action: onDone)
+            Button(shownCompanions.isEmpty ? reminder.actionLabel : "Done with all", action: onDone)
                 .buttonStyle(.borderedProminent)
                 .tint(reminder.category.color)
                 .fixedSize()

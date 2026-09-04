@@ -1,45 +1,60 @@
 import SwiftUI
 
 /// The full-screen take-over. Your desktop, frosted, with one instruction and a
-/// countdown floating on it. Deliberately almost empty — nothing to read means
-/// nothing to keep staring at.
+/// countdown on it.
+///
+/// When several screen-holding reminders fall due together it becomes a
+/// sequence rather than three separate ambushes: each step holds for its own
+/// duration, which is also the gap before the next one, and the whole stop is
+/// confirmed once at the end.
 struct BreakOverlayView: View {
     @ObservedObject var session: AlertPresenter.BreakSession
     var onDone: () -> Void
     var onSkip: () -> Void
-    var onCompanion: (Reminder) -> Void
 
-    private var accent: Color { session.reminder.category.color }
+    private var accent: Color { session.current.category.color }
+    private var isSequence: Bool { session.steps.count > 1 }
 
     var body: some View {
         ZStack {
-            // `.thickMaterial` here would be a flat grey sheet: a SwiftUI
-            // Material blurs within its own window, and this window is empty.
-            // Only a behind-window effect view actually frosts the desktop.
+            // A SwiftUI Material blurs within its own window, and this window is
+            // empty; only a behind-window effect view frosts the desktop.
             Backdrop(material: .fullScreenUI)
                 .ignoresSafeArea()
 
-            VStack(spacing: 40) {
-                name
+            VStack(spacing: 38) {
+                heading
                 dial
                 instruction
+                if isSequence { queue }
+                if !session.extras.isEmpty { extras }
                 controls
-                if !session.companions.isEmpty { companions }
             }
             .padding(60)
+            .animation(.smooth(duration: 0.3), value: session.stepIndex)
         }
         .focusable()
         .onExitCommand { if session.canDismiss { onSkip() } }
     }
 
-    private var name: some View {
-        HStack(spacing: 8) {
-            Image(systemName: session.reminder.symbol)
-                .font(.ui(13, .semibold))
-            Text(session.reminder.name)
-                .font(.ui(15, .medium))
+    // MARK: - Pieces
+
+    private var heading: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: session.current.symbol)
+                    .font(.ui(13, .semibold))
+                Text(session.current.name)
+                    .font(.ui(15, .medium))
+            }
+            .foregroundStyle(.secondary)
+
+            if isSequence {
+                Text("Step \(session.stepIndex + 1) of \(session.steps.count)")
+                    .font(.ui(12))
+                    .foregroundStyle(.tertiary)
+            }
         }
-        .foregroundStyle(.secondary)
     }
 
     private var dial: some View {
@@ -52,76 +67,96 @@ struct BreakOverlayView: View {
             )
             .frame(width: 236, height: 236)
 
-            Text("\(max(0, session.remaining))")
-                .font(.system(size: 84, weight: .thin, design: .default))
-                .monospacedDigit()
-                .contentTransition(.numericText(countsDown: true))
-                .animation(.snappy, value: session.remaining)
+            VStack(spacing: 2) {
+                Text(clock)
+                    .font(.system(size: 76, weight: .thin))
+                    .monospacedDigit()
+                    .contentTransition(.numericText(countsDown: true))
+                    .animation(.snappy, value: session.remaining)
+                if isSequence && !session.isLastStep {
+                    Text("then \(session.steps[session.stepIndex + 1].name)")
+                        .font(.ui(12))
+                        .foregroundStyle(.tertiary)
+                }
+            }
         }
         .frame(width: 236, height: 236)
         .animation(.linear(duration: 1), value: session.progress)
     }
 
+    /// Minutes and seconds once a hold runs past a minute — a bare "174" means
+    /// nothing to anyone.
+    private var clock: String {
+        let seconds = max(0, session.remaining)
+        if seconds < 60 { return "\(seconds)" }
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
     private var instruction: some View {
-        Text(session.reminder.detail)
-            .font(.system(size: 26, weight: .light))
+        Text(session.current.detail)
+            .font(.system(size: 24, weight: .light))
             .multilineTextAlignment(.center)
             .lineSpacing(6)
             .frame(maxWidth: 560)
     }
 
-    /// You are already standing here with your eyes shut. Anything else falling
-    /// due in the next few minutes may as well happen now, rather than pulling
-    /// you out of your work again a minute later.
-    private var companions: some View {
-        VStack(spacing: 14) {
-            Text(companionHeading)
-                .font(.ui(12))
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 10) {
-                ForEach(session.companions) { companion in
-                    let taken = session.answeredCompanions.contains(companion.id)
-                    Button {
-                        onCompanion(companion)
-                    } label: {
-                        HStack(spacing: 7) {
-                            Image(systemName: taken ? "checkmark" : companion.symbol)
-                                .font(.ui(11, .semibold))
-                            Text(companion.name)
-                                .font(.ui(13))
-                        }
-                        .foregroundStyle(taken ? AnyShapeStyle(.secondary) : AnyShapeStyle(companion.category.color))
-                    }
-                    .buttonStyle(.glass)
-                    .disabled(taken)
+    private var queue: some View {
+        HStack(spacing: 10) {
+            ForEach(Array(session.steps.enumerated()), id: \.element.id) { index, step in
+                let done = index < session.stepIndex
+                let now = index == session.stepIndex
+                HStack(spacing: 6) {
+                    Image(systemName: done ? "checkmark" : step.symbol)
+                        .font(.ui(10, .semibold))
+                    Text(step.name)
+                        .font(.ui(12))
                 }
+                .foregroundStyle(now ? AnyShapeStyle(step.category.color)
+                                     : AnyShapeStyle(done ? .tertiary : .secondary))
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .background(
+                    Capsule().fill(now ? step.category.color.opacity(0.16) : .clear)
+                )
+                .overlay(
+                    Capsule().strokeBorder(now ? .clear : Color.primary.opacity(0.10), lineWidth: 1)
+                )
             }
         }
-        .animation(.smooth(duration: 0.25), value: session.answeredCompanions)
     }
 
-    /// Several drops at one stop need spacing, or the second washes the first
-    /// straight out.
-    private var companionHeading: String {
-        let drops = session.companions.filter { $0.alert.isBlocking && $0.category == .eye }
-        if drops.isEmpty { return "While you're here" }
-        return "Also now — leave about five minutes between each"
+    private var extras: some View {
+        Text("Also now — \(session.extras.map(\.name).joined(separator: ", "))")
+            .font(.ui(12))
+            .foregroundStyle(.secondary)
     }
 
+    /// One answer for the whole stop. Nothing to tick off item by item.
     private var controls: some View {
-        HStack(spacing: 12) {
-            Button(session.reminder.actionLabel, action: onDone)
-                .buttonStyle(.glassProminent)
-                .tint(accent)
-                .keyboardShortcut(.defaultAction)
+        VStack(spacing: 10) {
+            HStack(spacing: 12) {
+                Button(doneLabel, action: onDone)
+                    .buttonStyle(.glassProminent)
+                    .tint(accent)
+                    .keyboardShortcut(.defaultAction)
 
-            Button("Skip", action: onSkip)
-                .buttonStyle(.glass)
+                Button("Skip", action: onSkip)
+                    .buttonStyle(.glass)
+            }
+            .controlSize(.large)
+            .disabled(!session.canDismiss)
+            .opacity(session.canDismiss ? 1 : 0.4)
+            .animation(.easeOut(duration: 0.3), value: session.canDismiss)
+
+            if session.allReminders.count > 1 {
+                Text("Covers all \(session.allReminders.count)")
+                    .font(.ui(11))
+                    .foregroundStyle(.tertiary)
+            }
         }
-        .controlSize(.large)
-        .disabled(!session.canDismiss)
-        .opacity(session.canDismiss ? 1 : 0.4)
-        .animation(.easeOut(duration: 0.3), value: session.canDismiss)
+    }
+
+    private var doneLabel: String {
+        session.allReminders.count > 1 ? "Done with all" : session.current.actionLabel
     }
 }

@@ -7,23 +7,48 @@ import SwiftUI
 @MainActor
 final class AlertPresenter: ObservableObject {
 
-    /// Live countdown for the blocking overlay, observed by every screen's copy.
+    /// One interruption, which may cover several things in order.
+    ///
+    /// Three different eye drops cannot go in at once — each needs a few
+    /// minutes to settle before the next, or the second washes the first out.
+    /// So a merged break is a sequence: each step holds the screen for its own
+    /// reminder's duration, and that hold *is* the spacing before the next one.
+    /// You are interrupted once and asked once.
     final class BreakSession: ObservableObject {
-        @Published var reminder: Reminder
+        /// Screen-holding reminders, in order. The first is what triggered it.
+        @Published var steps: [Reminder]
+        @Published var stepIndex: Int = 0
         @Published var remaining: Int
-        @Published var total: Int
         @Published var canDismiss: Bool = false
-        /// Small things worth doing while you are already interrupted.
-        @Published var companions: [Reminder] = []
-        @Published var answeredCompanions: Set<UUID> = []
+        /// Quiet things worth doing on the same trip. Listed, never tapped —
+        /// the one Done at the end covers them.
+        @Published var extras: [Reminder] = []
 
-        init(reminder: Reminder, seconds: Int) {
-            self.reminder = reminder
-            self.remaining = seconds
-            self.total = max(1, seconds)
+        init(steps: [Reminder]) {
+            self.steps = steps
+            self.remaining = BreakSession.seconds(of: steps.first)
         }
 
+        static func seconds(of reminder: Reminder?) -> Int {
+            guard let reminder, case .blocking(let s) = reminder.alert else { return 20 }
+            return max(1, s)
+        }
+
+        var current: Reminder { steps[min(stepIndex, steps.count - 1)] }
+        var total: Int { BreakSession.seconds(of: current) }
         var progress: Double { 1 - (Double(remaining) / Double(total)) }
+        var isLastStep: Bool { stepIndex >= steps.count - 1 }
+
+        /// Everything this interruption stands for.
+        var allReminders: [Reminder] { steps + extras }
+
+        /// Advances to the next thing. False when the sequence is finished.
+        func advance() -> Bool {
+            guard !isLastStep else { return false }
+            stepIndex += 1
+            remaining = total
+            return true
+        }
     }
 
     @Published private(set) var activeBreak: BreakSession?
@@ -61,7 +86,7 @@ final class AlertPresenter: ObservableObject {
 
     func present(_ reminder: Reminder) {
         guard !queue.contains(where: { $0.id == reminder.id }),
-              activeBreak?.reminder.id != reminder.id,
+              activeBreak?.steps.contains { $0.id == reminder.id } != true,
               activeQuiet?.id != reminder.id
         else { return }
         queue.append(reminder)
@@ -111,9 +136,13 @@ final class AlertPresenter: ObservableObject {
 
     private func showBreak(_ reminder: Reminder) {
         guard case .blocking(let seconds) = reminder.alert else { return }
-        let session = BreakSession(reminder: reminder, seconds: seconds)
-        session.companions = companionProvider?(reminder) ?? []
-        onClaim?(session.companions)
+        _ = seconds
+        let companions = companionProvider?(reminder) ?? []
+        // Screen-holders become steps in the sequence; everything else is
+        // listed as an extra and swept up by the same single confirmation.
+        let session = BreakSession(steps: [reminder] + companions.filter { $0.alert.isBlocking })
+        session.extras = companions.filter { !$0.alert.isBlocking }
+        onClaim?(companions)
         activeBreak = session
         onBreakChange?(true)
 
@@ -135,11 +164,7 @@ final class AlertPresenter: ObservableObject {
                 rootView: BreakOverlayView(
                     session: session,
                     onDone: { [weak self] in self?.finishBreak(kind: .done) },
-                    onSkip: { [weak self] in self?.finishBreak(kind: .skipped) },
-                    onCompanion: { [weak self] companion in
-                        session.answeredCompanions.insert(companion.id)
-                        self?.onAnswer?(companion, .done)
-                    }
+                    onSkip: { [weak self] in self?.finishBreak(kind: .skipped) }
                 )
             )
             window.alphaValue = 0
@@ -164,7 +189,10 @@ final class AlertPresenter: ObservableObject {
             Task { @MainActor in
                 guard let self, let session = self.activeBreak else { return }
                 session.remaining -= 1
-                if session.remaining <= 0 { self.finishBreak(kind: .done) }
+                guard session.remaining <= 0 else { return }
+                // Roll straight into the next drop rather than closing and
+                // interrupting again in five minutes.
+                if !session.advance() { self.finishBreak(kind: .done) }
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -175,7 +203,17 @@ final class AlertPresenter: ObservableObject {
         guard let session = activeBreak else { return }
         breakTimer?.invalidate(); breakTimer = nil
         activeBreak = nil
-        onAnswer?(session.reminder, kind)
+
+        // One answer covers the whole stop. Steps you already sat through are
+        // done regardless — you did them — and only what is left takes the
+        // verdict you gave.
+        for (index, step) in session.steps.enumerated() {
+            let alreadyDone = index < session.stepIndex
+            onAnswer?(step, alreadyDone ? .done : kind)
+        }
+        for extra in session.extras {
+            onAnswer?(extra, kind)
+        }
         if kind == .done { play("Glass") }
 
         let windows = overlayWindows
@@ -187,9 +225,6 @@ final class AlertPresenter: ObservableObject {
             windows.forEach { $0.orderOut(nil) }
         }
 
-        for companion in session.companions where !session.answeredCompanions.contains(companion.id) {
-            onAnswer?(companion, .skipped)
-        }
 
         onBreakChange?(false)
         lastAlertEnded = Date()
@@ -235,6 +270,11 @@ final class AlertPresenter: ObservableObject {
         toastTimer?.invalidate(); toastTimer = nil
         activeQuiet = nil
         onAnswer?(reminder, kind)
+        // The one answer covers whatever rode along with it.
+        for companion in quietCompanions where !answeredQuiet.contains(companion.id) {
+            onAnswer?(companion, kind)
+        }
+        quietCompanions = []
         closeQuiet()
     }
 

@@ -141,12 +141,15 @@ enum WindowCapture {
                 .environmentObject(store).environmentObject(scheduler))
         }
 
-        let session = AlertPresenter.BreakSession(reminder: PresetLibrary.eyeBreak, seconds: 20)
-        session.remaining = 13
+        let blockers = store.config.reminders.filter { $0.alert.isBlocking }
+        let session = AlertPresenter.BreakSession(
+            steps: blockers.isEmpty ? [PresetLibrary.eyeBreak] : Array(blockers.prefix(3))
+        )
+        session.remaining = 132
         session.canDismiss = true
-        session.companions = store.config.reminders.filter { !$0.alert.isBlocking }.prefix(2).map { $0 }
+        session.extras = store.config.reminders.filter { !$0.alert.isBlocking }.prefix(2).map { $0 }
         shoot("overlay", size: CGSize(width: 1280, height: 800), into: dir) {
-            AnyView(BreakOverlayView(session: session, onDone: {}, onSkip: {}, onCompanion: { _ in }))
+            AnyView(BreakOverlayView(session: session, onDone: {}, onSkip: {}))
         }
 
         // The worst case: the longest detail in the set, with companions.
