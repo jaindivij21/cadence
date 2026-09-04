@@ -226,7 +226,7 @@ final class Scheduler: ObservableObject {
             }
             return candidate
 
-        case .timesPerDay, .atTimes:
+        case .timesPerDay, .atTimes, .beforeEnd:
             let slots = store.slots(for: reminder)
             let handled = store.today.handledCount(for: reminder.id)
             guard handled < slots.count else { return nil }

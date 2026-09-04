@@ -374,6 +374,7 @@ final class CommandBarController: ObservableObject {
         case .everyMinutes:       return nil
         case .timesPerDay(let n): return n
         case .atTimes(let t):     return t.count
+        case .beforeEnd:          return 1
         }
     }
 

@@ -39,6 +39,9 @@ enum Schedule: Codable, Hashable {
     case timesPerDay(Int)
     /// Fires at these exact clock times.
     case atTimes([MinuteOfDay])
+    /// Fires a set number of minutes before your hours end, and moves with them
+    /// as they are learned. For the thing you do on your way out.
+    case beforeEnd(minutes: Int)
 
     var summary: String {
         switch self {
@@ -48,6 +51,8 @@ enum Schedule: Codable, Hashable {
             return n == 1 ? "once a day" : "\(n)× a day"
         case .atTimes(let times):
             return times.map(\.asClockString).joined(separator: ", ")
+        case .beforeEnd(let minutes):
+            return minutes == 0 ? "as I finish" : "\(minutes)m before I finish"
         }
     }
 }
@@ -153,6 +158,8 @@ struct Reminder: Codable, Identifiable, Hashable {
             return []
         case .atTimes(let times):
             return times.sorted()
+        case .beforeEnd(let minutes):
+            return [max(w.start, w.end - minutes)]
         case .timesPerDay(let n):
             guard n > 0 else { return [] }
             let shift = slotOffsetMinutes

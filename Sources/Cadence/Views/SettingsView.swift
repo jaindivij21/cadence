@@ -362,13 +362,14 @@ private struct ReminderEditor: View {
     ]
 
     private enum ScheduleKind: String, CaseIterable, Identifiable {
-        case interval, perDay, fixed
+        case interval, perDay, fixed, endOfDay
         var id: String { rawValue }
         var title: String {
             switch self {
             case .interval: return "Interval"
             case .perDay:   return "Per day"
             case .fixed:    return "Set times"
+            case .endOfDay: return "End of day"
             }
         }
     }
@@ -528,6 +529,7 @@ private struct ReminderEditor: View {
                 case .everyMinutes: return .interval
                 case .timesPerDay:  return .perDay
                 case .atTimes:      return .fixed
+                case .beforeEnd:    return .endOfDay
                 }
             },
             set: { kind in
@@ -535,6 +537,7 @@ private struct ReminderEditor: View {
                 case .interval: reminder.schedule = .everyMinutes(20)
                 case .perDay:   reminder.schedule = .timesPerDay(3)
                 case .fixed:    reminder.schedule = .atTimes([9 * 60])
+                case .endOfDay: reminder.schedule = .beforeEnd(minutes: 15)
                 }
             }
         )
@@ -558,6 +561,15 @@ private struct ReminderEditor: View {
                     get: { count },
                     set: { reminder.schedule = .timesPerDay(max(1, $0)) }
                 ), in: 1...24)
+                .monospacedDigit()
+            }
+
+        case .beforeEnd(let minutes):
+            Row(label: "Before I finish", detail: "Moves with your hours as they are learned, so it is always on your way out.") {
+                Stepper("\(minutes) min", value: Binding(
+                    get: { minutes },
+                    set: { reminder.schedule = .beforeEnd(minutes: max(0, $0)) }
+                ), in: 0...180, step: 15)
                 .monospacedDigit()
             }
 
