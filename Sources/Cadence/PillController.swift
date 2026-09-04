@@ -13,6 +13,7 @@ private struct PillHost: View {
     let onSnooze: () -> Void
     let onSkip: () -> Void
     let onCompanion: (Reminder) -> Void
+    let chordLabel: String?
 
     @State private var answered: Set<UUID> = []
 
@@ -28,7 +29,8 @@ private struct PillHost: View {
             onCompanion: { companion in
                 answered.insert(companion.id)
                 onCompanion(companion)
-            }
+            },
+            chordLabel: chordLabel
         )
     }
 }
@@ -43,24 +45,24 @@ private struct PillHost: View {
 final class PillController {
     private var panel: NSPanel?
 
-    /// Space answers the pill without reaching for the mouse.
+    /// A key that answers the pill without reaching for the mouse.
     ///
-    /// The pill never takes focus, by design — a reminder must not yank your
-    /// cursor out of what you are writing. So the only way to hear a bare
-    /// spacebar is to claim it system-wide, and a claimed space is a space that
-    /// never reaches your document.
+    /// A bare spacebar cannot do this job. The pill never takes focus — a
+    /// reminder must not yank your cursor out of what you are writing — so the
+    /// only way to hear a plain key is to claim it system-wide, and a claimed
+    /// space is a space that never reaches your document. Claiming it only
+    /// while you are not typing was worse: at a laptop you are nearly always
+    /// typing, so it almost never worked.
     ///
-    /// The compromise: claim it only while you are demonstrably not typing.
-    /// This polls the keyboard's idle time and holds the key only after a few
-    /// quiet seconds, releasing it within a second of you starting to type
-    /// again. Hit space mid-sentence and it goes where you meant it to.
-    private let spaceKey = HotKey(identifier: 2)
-    private var spaceWatchdog: Timer?
+    /// A chord has neither problem. It is registered for as long as the pill is
+    /// up and released the moment it goes.
+    private let answerKey = HotKey(identifier: 2)
     private var confirm: (() -> Void)?
-    /// Seconds of no typing before space belongs to the pill.
-    private let quietBeforeClaiming: Double = 3
 
     var isShowing: Bool { panel != nil }
+
+    /// Which chord answers the pill. Set from config before each showing.
+    var chord: HotKeyChoice = .controlSpace
 
     func show(
         _ reminder: Reminder,
@@ -95,7 +97,8 @@ final class PillController {
             onDone: onDone,
             onSnooze: onSnooze,
             onSkip: onSkip,
-            onCompanion: onCompanion
+            onCompanion: onCompanion,
+            chordLabel: chord == .off ? nil : chord.title
         )
         .measure { [weak panel] size in
             guard let panel, size.width > 1, size.height > 1 else { return }
@@ -110,7 +113,11 @@ final class PillController {
         PillController.place(panel, size: panel.frame.size)
         self.panel = panel
         confirm = onDone
-        startWatchingForQuiet()
+        if chord != .off {
+            answerKey.register(keyCode: chord.keyCode, modifiers: chord.modifiers) { [weak self] in
+                self?.confirm?()
+            }
+        }
 
         // Drop in from just above its resting place.
         let resting = panel.frame
@@ -127,7 +134,8 @@ final class PillController {
     }
 
     func hide() {
-        stopWatchingForQuiet()
+        answerKey.unregister()
+        confirm = nil
         guard let panel else { return }
         self.panel = nil
         NSAnimationContext.runAnimationGroup { context in
@@ -137,38 +145,6 @@ final class PillController {
             panel.animator().alphaValue = 0
         } completionHandler: {
             panel.orderOut(nil)
-        }
-    }
-
-    // MARK: - Spacebar
-
-    private func startWatchingForQuiet() {
-        stopWatchingForQuiet()
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.reconsiderSpace() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        spaceWatchdog = timer
-        reconsiderSpace()
-    }
-
-    private func stopWatchingForQuiet() {
-        spaceWatchdog?.invalidate()
-        spaceWatchdog = nil
-        spaceKey.unregister()
-        confirm = nil
-    }
-
-    private func reconsiderSpace() {
-        let idle = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .keyDown)
-        let quiet = idle >= quietBeforeClaiming
-
-        if quiet, !spaceKey.isRegistered {
-            spaceKey.register(keyCode: UInt32(kVK_Space), modifiers: 0) { [weak self] in
-                self?.confirm?()
-            }
-        } else if !quiet, spaceKey.isRegistered {
-            spaceKey.unregister()
         }
     }
 

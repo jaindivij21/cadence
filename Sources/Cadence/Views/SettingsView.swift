@@ -277,6 +277,18 @@ private struct GeneralSettings: View {
                     .labelsHidden()
                     .frame(width: 150)
                 }
+                Row(
+                    label: "Answer a pill with",
+                    detail: "A chord, not a bare key. The pill holds no focus, so a plain spacebar would have to be taken from whatever you are typing into."
+                ) {
+                    Picker("", selection: $store.config.pillHotKey) {
+                        ForEach(HotKeyChoice.allCases) { choice in
+                            Text(choice.title).tag(choice)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 150)
+                }
             }
 
             Group_(title: "Behaviour") {

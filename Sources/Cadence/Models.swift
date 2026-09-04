@@ -260,6 +260,10 @@ struct Config: Codable {
     /// Chord that summons the command bar. Never ⌘Space — that is Spotlight's,
     /// and Cadence has no business taking it.
     var hotKey: HotKeyChoice = .optionSpace
+    /// Chord that answers a pill without touching the mouse. Not a bare key:
+    /// the pill holds no focus, so a plain key would have to be taken from
+    /// whatever you are typing into.
+    var pillHotKey: HotKeyChoice = .controlSpace
     var soundEnabled: Bool = true
     var menuBarCountdown: Bool = true
     var startAtLogin: Bool = false

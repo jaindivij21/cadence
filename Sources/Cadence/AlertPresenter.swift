@@ -68,6 +68,10 @@ final class AlertPresenter: ObservableObject {
     /// instead of claiming something is due "now" and then doing nothing.
     var onHold: ((Date?) -> Void)?
     var soundEnabled: Bool = true
+    /// Chord that answers the pill, passed straight through to it.
+    var pillChord: HotKeyChoice = .controlSpace {
+        didSet { pill.chord = pillChord }
+    }
 
     private let pill = PillController()
     private var queue: [Reminder] = []

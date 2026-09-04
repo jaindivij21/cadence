@@ -30,6 +30,7 @@ final class AppModel: ObservableObject {
             guard let store, let presenter else { return }
             presenter.soundEnabled = store.config.soundEnabled
             presenter.minimumGap = Double(store.config.minimumGapMinutes) * 60
+            presenter.pillChord = store.config.pillHotKey
             presenter.present(reminder)
         }
 
@@ -76,6 +77,9 @@ final class AppModel: ObservableObject {
             }
         }
         commandBar.onOpenSettings = { [weak self] in self?.openSettings() }
+        commandBar.onTestPill = { [weak presenter] reminder in
+            presenter?.present(reminder)
+        }
         commandBar.registerHotKey()
 
         store.$config
@@ -92,7 +96,7 @@ final class AppModel: ObservableObject {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if GlassProbe.runIfRequested() || WindowCapture.runIfRequested() || SmokeTest.runIfRequested() {
+        if HotKeyProbe.runIfRequested() || GlassProbe.runIfRequested() || WindowCapture.runIfRequested() || SmokeTest.runIfRequested() {
             NSApp.terminate(nil)
             return
         }

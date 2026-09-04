@@ -16,6 +16,8 @@ struct PillView: View {
     var onSnooze: () -> Void
     var onSkip: () -> Void
     var onCompanion: (Reminder) -> Void = { _ in }
+    /// Rendered on the confirm button so the shortcut is visible, not folklore.
+    var chordLabel: String? = nil
 
     /// Two chips at most, or the actions get squeezed out.
     private var shownCompanions: [Reminder] { Array(companions.prefix(2)) }
@@ -51,14 +53,16 @@ struct PillView: View {
             Button(action: onDone) {
                 HStack(spacing: 6) {
                     Text(shownCompanions.isEmpty ? reminder.actionLabel : "Done with all")
-                    Text("space")
-                        .font(.ui(9, .semibold))
+                    if let chordLabel {
+                        Text(chordLabel)
+                            .font(.ui(9, .semibold))
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
-                        .background(
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(.black.opacity(0.18))
-                        )
+                            .background(
+                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                    .fill(.black.opacity(0.18))
+                            )
+                    }
                 }
             }
             .buttonStyle(.borderedProminent)
@@ -85,6 +89,10 @@ struct PillView: View {
         .padding(.trailing, 12)
         .frame(width: width, height: 58)
         .glassCapsule(interactive: false)
+        // The whole capsule answers it. Reaching for a small button with the
+        // mouse is the thing the shortcut exists to avoid.
+        .contentShape(Capsule())
+        .onTapGesture(perform: onDone)
         // Room for the glass shadow, so the window does not clip it.
         .padding(16)
     }

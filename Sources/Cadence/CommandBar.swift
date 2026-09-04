@@ -169,6 +169,7 @@ final class CommandBarController: ObservableObject {
 
     var onOpenSettings: () -> Void = {}
     var onLog: (Reminder, EventKind) -> Void = { _, _ in }
+    var onTestPill: ((Reminder) -> Void)?
 
     init(store: Store, scheduler: Scheduler) {
         self.store = store
@@ -324,6 +325,21 @@ final class CommandBarController: ObservableObject {
                     self?.scheduler.pause(minutes: minutes)
                 })
             }
+        }
+
+        // So a shortcut or a layout change can be checked in five seconds
+        // rather than by waiting for the next real reminder.
+        if let sample = store.config.reminders.first(where: { !$0.alert.isBlocking && $0.enabled }) {
+            commands.append(Command(
+                id: "test-pill",
+                title: "Test a pill",
+                subtitle: "Show one now, to check the shortcut works",
+                symbol: "capsule",
+                tint: .teal,
+                trailing: nil
+            ) { [weak self] in
+                self?.onTestPill?(sample)
+            })
         }
 
         commands.append(Command(
