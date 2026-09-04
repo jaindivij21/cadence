@@ -106,6 +106,48 @@ final class Store: ObservableObject {
         return days.first { $0.day == key }
     }
 
+    /// Records that the Mac was in use at this moment, which is what the
+    /// learned waking window is built from.
+    func noteSeen(_ date: Date) {
+        ensureToday()
+        guard !days.isEmpty else { return }
+        if days[0].firstSeen == nil { days[0].firstSeen = date }
+        // Only write when the minute changes, so this does not thrash the file.
+        if let last = days[0].lastSeen, Int(date.timeIntervalSince(last)) < 60 { return }
+        days[0].lastSeen = date
+    }
+
+    /// The window slots are spread across. Learned from the last two weeks of
+    /// use when there is enough of it, otherwise the one set by hand.
+    var effectiveWaking: TimeWindow {
+        guard config.learnWakingWindow, let learned = learnedWaking else { return config.waking }
+        return learned
+    }
+
+    /// Needs at least three days before it will claim to know anything.
+    var learnedWaking: TimeWindow? {
+        let recent = days.prefix(14).compactMap { day -> (Int, Int)? in
+            guard let first = day.firstSeen, let last = day.lastSeen else { return nil }
+            let start = Store.minuteOfDay(first)
+            let end = Store.minuteOfDay(last)
+            guard end > start else { return nil }
+            return (start, end)
+        }
+        guard recent.count >= 3 else { return nil }
+        let start = recent.map(\.0).reduce(0, +) / recent.count
+        let end = recent.map(\.1).reduce(0, +) / recent.count
+        return TimeWindow(start: start, end: end)
+    }
+
+    var learnedDayCount: Int {
+        days.prefix(14).filter { $0.firstSeen != nil && $0.lastSeen != nil }.count
+    }
+
+    static func minuteOfDay(_ date: Date) -> Int {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    }
+
     // MARK: - Writing events
 
     func log(_ reminder: Reminder, kind: EventKind, at date: Date = Date()) {

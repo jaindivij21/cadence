@@ -140,6 +140,9 @@ struct LogEvent: Codable, Identifiable, Hashable {
 struct DayLog: Codable {
     var day: String                 // "yyyy-MM-dd"
     var events: [LogEvent] = []
+    /// First and last moment the screen was on and unlocked that day.
+    var firstSeen: Date? = nil
+    var lastSeen: Date? = nil
 
     func events(for reminder: UUID) -> [LogEvent] {
         events.filter { $0.reminderID == reminder }
@@ -170,12 +173,13 @@ struct Config: Codable {
     var hotKey: HotKeyChoice = .optionSpace
     var soundEnabled: Bool = true
     var menuBarCountdown: Bool = true
-    /// If you have been away from the keyboard this long, interval reminders
-    /// reset — you already took the break.
-    var idleResetMinutes: Int = 5
     var startAtLogin: Bool = false
     /// How late a missed slot can be before it is written off instead of fired.
     var slotGraceMinutes: Int = 25
+    /// Work the waking window out from when the Mac is actually in use, rather
+    /// than asking. `waking` is the fallback until there is enough history, and
+    /// the override when this is off.
+    var learnWakingWindow: Bool = true
 }
 
 // MARK: - Defaults
@@ -213,7 +217,7 @@ enum PresetLibrary {
     static var eyeBreak: Reminder {
         Reminder(
             name: "20-20-20 Break",
-            detail: "Look at something about 20 feet away. Blink slowly and fully.",
+            detail: "Let your eyes go long — the furthest thing in the room, or out of a window. Then blink all the way closed a few times; a half blink does nothing.",
             symbol: "eye",
             category: .eye,
             schedule: .everyMinutes(20),
@@ -237,7 +241,7 @@ enum PresetLibrary {
     static var distanceFocus: Reminder {
         Reminder(
             name: "Distance Focus",
-            detail: "Find the furthest thing you can see and hold your focus on it for 30 seconds.",
+            detail: "Pick the furthest thing you can see and hold it. Your focusing muscle has been clenched at screen distance for an hour.",
             symbol: "eye.fill",
             category: .eye,
             schedule: .everyMinutes(90),
@@ -250,7 +254,7 @@ enum PresetLibrary {
     static func doses(_ count: Int) -> Reminder {
         Reminder(
             name: "Drops · \(count)× daily",
-            detail: "One drop in each eye. Close your eyes and press the inner corner for 30 seconds.",
+            detail: "One drop in each eye. Then close them and press the inner corner, by your nose, for thirty seconds — that keeps the drop on your eye instead of draining down your throat.",
             symbol: "drop.fill",
             category: .eye,
             schedule: .timesPerDay(count),

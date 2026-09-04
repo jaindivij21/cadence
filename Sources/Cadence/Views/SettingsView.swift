@@ -243,15 +243,24 @@ private struct GeneralSettings: View {
                 title: "Your day",
                 footnote: "Anything scheduled a set number of times a day is spread evenly across this window."
             ) {
-                Row(label: "Wake") {
-                    DatePicker("", selection: minuteBinding($store.config.waking.start), displayedComponents: .hourAndMinute)
-                        .labelsHidden()
-                        .frame(width: 118)
+                Row(
+                    label: "Work it out from my Mac",
+                    detail: learnedSummary
+                ) {
+                    SwitchToggle(isOn: $store.config.learnWakingWindow)
                 }
-                Row(label: "Sleep") {
-                    DatePicker("", selection: minuteBinding($store.config.waking.end), displayedComponents: .hourAndMinute)
-                        .labelsHidden()
-                        .frame(width: 118)
+
+                if !store.config.learnWakingWindow || store.learnedWaking == nil {
+                    Row(label: "Wake") {
+                        DatePicker("", selection: minuteBinding($store.config.waking.start), displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                            .frame(width: 118)
+                    }
+                    Row(label: "Sleep") {
+                        DatePicker("", selection: minuteBinding($store.config.waking.end), displayedComponents: .hourAndMinute)
+                            .labelsHidden()
+                            .frame(width: 118)
+                    }
                 }
             }
 
@@ -285,15 +294,8 @@ private struct GeneralSettings: View {
 
             Group_(
                 title: "Timing",
-                footnote: "Cadence watches the keyboard, not you. Step away and the repeating clocks reset by themselves."
+                footnote: "Cadence watches the screen, not the keyboard. Reading without typing still counts as looking at it — that is exactly when your eyes need the break. The clocks only hold when the display sleeps or the Mac locks."
             ) {
-                Row(
-                    label: "Reset repeating timers after",
-                    detail: "You already had the break."
-                ) {
-                    Stepper("\(store.config.idleResetMinutes) min", value: $store.config.idleResetMinutes, in: 1...60)
-                        .monospacedDigit()
-                }
                 Row(
                     label: "Write off a missed slot after",
                     detail: "Later than this it is recorded as missed, not fired late."
@@ -315,6 +317,15 @@ private struct GeneralSettings: View {
                 }
             }
         }
+    }
+
+    /// What the learned window currently says, in plain words.
+    private var learnedSummary: String {
+        guard let learned = store.learnedWaking else {
+            return "Watching. It needs three days of use before it will guess; until then it uses the times below."
+        }
+        let days = store.learnedDayCount
+        return "\(learned.start.asClockString) to \(learned.end.asClockString), from \(days) day\(days == 1 ? "" : "s") of use."
     }
 
     private func applyLoginItem(_ enabled: Bool) {
