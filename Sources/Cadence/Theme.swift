@@ -230,3 +230,102 @@ enum Fmt {
         amount.string(from: NSNumber(value: value)) ?? String(Int(value))
     }
 }
+
+// MARK: - Marquee
+
+private struct WidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+/// One line of text that scrolls itself when it does not fit.
+///
+/// Truncating a sentence mid-word reads as a bug, and wrapping to two lines
+/// makes the pill tall. This keeps one line and moves it, and — importantly —
+/// stays perfectly still when the text already fits, so short reminders do not
+/// wobble for no reason.
+struct MarqueeText: View {
+    let text: String
+    var font: Font = .ui(12)
+    /// Slow enough to read at a glance.
+    var pointsPerSecond: Double = 22
+    /// Blank run between the end of one pass and the start of the next.
+    var gap: CGFloat = 56
+    /// Time to read the opening words before anything moves.
+    var startDelay: Double = 1.6
+
+    @State private var textWidth: CGFloat = 0
+    @State private var offset: CGFloat = 0
+    @State private var task: Task<Void, Never>?
+
+    var body: some View {
+        GeometryReader { proxy in
+            let overflows = textWidth > proxy.size.width + 1
+
+            HStack(spacing: gap) {
+                label
+                if overflows { label }
+            }
+            .offset(x: offset)
+            .frame(width: proxy.size.width, alignment: .leading)
+            .clipped()
+            // A hard clip reads as a rendering fault. Fade the text out at the
+            // edge it is running past instead.
+            .mask(fade(leading: overflows && offset < 0, trailing: overflows))
+            .onAppear { restart(overflows: overflows) }
+            .onChange(of: overflows) { _, now in restart(overflows: now) }
+            .onChange(of: text) { _, _ in restart(overflows: overflows) }
+            .onDisappear { task?.cancel() }
+        }
+        .frame(height: 15)
+    }
+
+    private var label: some View {
+        Text(text)
+            .font(font)
+            .lineLimit(1)
+            .fixedSize()
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(key: WidthKey.self, value: proxy.size.width)
+                }
+            )
+            .onPreferenceChange(WidthKey.self) { textWidth = $0 }
+    }
+
+    private func fade(leading: Bool, trailing: Bool) -> some View {
+        let edge = 18.0
+        return GeometryReader { proxy in
+            let width = max(proxy.size.width, 1)
+            LinearGradient(
+                stops: [
+                    .init(color: .black.opacity(leading ? 0 : 1), location: 0),
+                    .init(color: .black, location: leading ? edge / width : 0),
+                    .init(color: .black, location: trailing ? 1 - edge / width : 1),
+                    .init(color: .black.opacity(trailing ? 0 : 1), location: 1)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        }
+    }
+
+    private func restart(overflows: Bool) {
+        task?.cancel()
+        offset = 0
+        guard overflows, textWidth > 0 else { return }
+
+        let distance = textWidth + gap
+        let duration = Double(distance) / pointsPerSecond
+
+        task = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(startDelay))
+            guard !Task.isCancelled else { return }
+            withAnimation(.linear(duration: duration).repeatForever(autoreverses: false)) {
+                offset = -distance
+            }
+        }
+    }
+}

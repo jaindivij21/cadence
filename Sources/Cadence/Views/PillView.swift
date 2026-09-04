@@ -21,25 +21,24 @@ struct PillView: View {
     private var shownCompanions: [Reminder] { Array(companions.prefix(2)) }
 
     private var width: CGFloat {
-        shownCompanions.isEmpty ? 480 : 480 + CGFloat(shownCompanions.count) * 116
+        shownCompanions.isEmpty ? 560 : 560 + CGFloat(shownCompanions.count) * 116
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: reminder.symbol)
                 .font(.ui(15, .semibold))
                 .foregroundStyle(reminder.category.color)
                 .frame(width: 24)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(reminder.name)
                     .font(.ui(14, .semibold))
                     .lineLimit(1)
-                Text(progress ?? reminder.detail)
-                    .font(.ui(12))
+                // Scrolls itself when the sentence is longer than the pill, and
+                // stays still when it is not.
+                MarqueeText(text: progress ?? reminder.detail)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -84,7 +83,7 @@ struct PillView: View {
         .controlSize(.small)
         .padding(.leading, 18)
         .padding(.trailing, 12)
-        .frame(width: width, height: 56)
+        .frame(width: width, height: 58)
         .glassCapsule(interactive: false)
         // Room for the glass shadow, so the window does not clip it.
         .padding(16)

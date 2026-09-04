@@ -149,8 +149,26 @@ enum WindowCapture {
             AnyView(BreakOverlayView(session: session, onDone: {}, onSkip: {}, onCompanion: { _ in }))
         }
 
+        // The worst case: the longest detail in the set, with companions.
+        if let wordiest = store.config.reminders.max(by: { $0.detail.count < $1.detail.count }) {
+            let others = store.config.reminders.filter { $0.id != wordiest.id }.prefix(1).map { $0 }
+            shoot("pill-long", size: CGSize(width: 900, height: 130), into: dir) {
+                AnyView(
+                    VStack {
+                        PillView(
+                            reminder: wordiest,
+                            progress: nil,
+                            companions: others,
+                            onDone: {}, onSnooze: {}, onSkip: {}
+                        )
+                        Spacer()
+                    }
+                )
+            }
+        }
+
         if let water = store.config.reminders.first(where: { $0.category == .hydration }) {
-            shoot("pill", size: CGSize(width: 720, height: 120), into: dir) {
+            shoot("pill", size: CGSize(width: 720, height: 130), into: dir) {
                 AnyView(
                     VStack {
                         PillView(
