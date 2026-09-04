@@ -337,7 +337,7 @@ enum PresetLibrary {
     static var warmCompress: Reminder {
         Reminder(
             name: "Warm Compress",
-            detail: "Warm cloth over closed eyes for five minutes, then a gentle lid massage.",
+            detail: "A warm cloth over closed eyes for five minutes, then a gentle lid massage. Loosens the oil glands along the lash line that a long day of screens shuts down.",
             symbol: "flame.fill",
             category: .eye,
             schedule: .atTimes([21 * 60 + 30]),
@@ -358,17 +358,17 @@ enum PresetLibrary {
         )
     }
 
-    // Medication
-    static func doses(_ count: Int) -> Reminder {
+    // Medication. Deliberately says nothing about what you are taking. The
+    // library is for anyone on a schedule; the specifics belong in your own
+    // copy of a reminder, not in what the app ships with.
+    static func medication(_ count: Int) -> Reminder {
         Reminder(
-            name: "Drops · \(count)× daily",
-            detail: "One drop in each eye. Then close them and press the inner corner, by your nose, for thirty seconds — that keeps the drop on your eye instead of draining down your throat.",
-            symbol: "drop.fill",
-            category: .eye,
+            name: "Medication · \(count)× a day",
+            detail: "Take it as prescribed.",
+            symbol: "pills.fill",
+            category: .immunity,
             schedule: .timesPerDay(count),
-            // Long enough to actually keep your eyes shut while it settles.
-            // Skip unlocks after three seconds, so it is a hold, not a trap.
-            alert: .blocking(seconds: 180),
+            alert: .toast(sticky: true),
             actionLabel: "Taken"
         )
     }
@@ -539,7 +539,7 @@ enum PresetLibrary {
     static var groups: [PresetGroup] {
         [
             PresetGroup(name: "Screen & eyes", reminders: [eyeBreak, distanceFocus, coldCompress, warmCompress]),
-            PresetGroup(name: "Medication", reminders: [doses(6), doses(4), doses(2), morningMeds, eveningMeds]),
+            PresetGroup(name: "Medication", reminders: [morningMeds, eveningMeds, medication(2), medication(3), medication(4), medication(6)]),
             PresetGroup(name: "Hydration", reminders: [water, electrolytes]),
             PresetGroup(name: "Immunity & recovery", reminders: [coldExposure, daylight, supplements, breathwork, screensDown]),
             PresetGroup(name: "Movement", reminders: [standAndMove, postureReset, mobility]),

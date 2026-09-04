@@ -70,8 +70,8 @@ supplements, and a screens-down cue at night.
 
 Everything else comes from the preset library in **Settings → Add**:
 
-- **Screen & eyes** — 20-20-20, distance focus, warm compress
-- **Medication** — drops at 6× / 4× / 2× a day, morning and evening doses
+- **Screen & eyes** — 20-20-20, distance focus, cold and warm compress
+- **Medication** — morning and evening doses, or 2× / 3× / 4× / 6× a day
 - **Hydration** — water, electrolytes
 - **Immunity & recovery** — cold exposure, daylight, supplements, breathwork, screens down
 - **Movement** — stand and move, posture reset, mobility
@@ -79,6 +79,11 @@ Everything else comes from the preset library in **Settings → Add**:
 
 A preset is a normal reminder the moment you add it. Rename it, re-time it,
 change how loudly it interrupts, delete it.
+
+Nothing in the library names a condition or a prescription. "Medication · 4× a
+day" is as specific as it gets; what you are actually taking, and what you need
+to remember about taking it, belongs in your copy of the reminder. The app ships
+knowing nothing about you.
 
 ## Install
 
