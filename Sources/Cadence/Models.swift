@@ -366,7 +366,9 @@ enum PresetLibrary {
             symbol: "drop.fill",
             category: .eye,
             schedule: .timesPerDay(count),
-            alert: .blocking(seconds: 25),
+            // Long enough to actually keep your eyes shut while it settles.
+            // Skip unlocks after three seconds, so it is a hold, not a trap.
+            alert: .blocking(seconds: 180),
             actionLabel: "Taken"
         )
     }
