@@ -60,26 +60,63 @@ extension Font {
 
 // MARK: - Glass
 
+/// Blurs whatever is *behind the window* — the desktop, your editor, a video.
+///
+/// This is not the same thing as SwiftUI's `Material`. A `Material` samples
+/// inside its own window, so on a borderless transparent panel it has nothing
+/// to blur and renders as a flat grey sheet. Every floating Cadence surface
+/// therefore sits on one of these, with Liquid Glass layered on top for the
+/// refraction and the specular rim.
+struct Backdrop: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .hudWindow
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = material
+    }
+}
+
 /// The app's shape vocabulary. Capsules for readouts, circles for single
-/// values, squircles for buttons — nothing else.
+/// values, squircles for panels and buttons — nothing else.
 extension View {
     func glassCapsule(tint: Color? = nil, interactive: Bool = false) -> some View {
-        glassEffect(Self.glass(tint: tint, interactive: interactive), in: .capsule)
+        liquid(Capsule(style: .continuous), tint: tint, interactive: interactive, shape: .capsule)
     }
 
     func glassCircle(tint: Color? = nil, interactive: Bool = false) -> some View {
-        glassEffect(Self.glass(tint: tint, interactive: interactive), in: .circle)
+        liquid(Circle(), tint: tint, interactive: interactive, shape: .circle)
     }
 
     func glassSquircle(radius: CGFloat = 16, tint: Color? = nil, interactive: Bool = false) -> some View {
-        glassEffect(Self.glass(tint: tint, interactive: interactive), in: .rect(cornerRadius: radius))
+        liquid(
+            RoundedRectangle(cornerRadius: radius, style: .continuous),
+            tint: tint,
+            interactive: interactive,
+            shape: .rect(cornerRadius: radius)
+        )
     }
 
-    private static func glass(tint: Color?, interactive: Bool) -> Glass {
-        var glass = Glass.regular
+    /// Real backdrop blur first, then clear Liquid Glass on top. Using
+    /// `.regular` glass here would paint its own fill over the blur and flatten
+    /// it; `.clear` contributes the rim and the refraction and nothing else.
+    private func liquid<S: Shape, G: Shape>(
+        _ clip: S,
+        tint: Color?,
+        interactive: Bool,
+        shape: G
+    ) -> some View {
+        var glass = Glass.clear
         if let tint { glass = glass.tint(tint) }
         if interactive { glass = glass.interactive() }
-        return glass
+        return background(Backdrop().clipShape(clip))
+            .glassEffect(glass, in: shape)
     }
 }
 

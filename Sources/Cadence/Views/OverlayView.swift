@@ -12,8 +12,10 @@ struct BreakOverlayView: View {
 
     var body: some View {
         ZStack {
-            Rectangle()
-                .fill(.thickMaterial)
+            // `.thickMaterial` here would be a flat grey sheet: a SwiftUI
+            // Material blurs within its own window, and this window is empty.
+            // Only a behind-window effect view actually frosts the desktop.
+            Backdrop(material: .fullScreenUI)
                 .ignoresSafeArea()
 
             VStack(spacing: 44) {

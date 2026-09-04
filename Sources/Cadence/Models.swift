@@ -170,6 +170,9 @@ struct Config: Codable {
     var showIsland: Bool = true
     /// Where the island sits, in screen coordinates. Nil until it is dragged.
     var islandCenter: [Double]? = nil
+    /// Chord that summons the command bar. Never ⌘Space — that is Spotlight's,
+    /// and Cadence has no business taking it.
+    var hotKey: HotKeyChoice = .optionSpace
     var soundEnabled: Bool = true
     var menuBarCountdown: Bool = true
     /// If you have been away from the keyboard this long, interval reminders

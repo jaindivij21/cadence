@@ -141,6 +141,18 @@ private struct GeneralSettings: View {
                 Text("Anything scheduled a set number of times a day is spread across this window.")
             }
 
+            Section {
+                Picker("Summon the command bar with", selection: $store.config.hotKey) {
+                    ForEach(HotKeyChoice.allCases) { choice in
+                        Text(choice.title).tag(choice)
+                    }
+                }
+            } header: {
+                Text("Command bar")
+            } footer: {
+                Text("Press it anywhere to log something, start a break, or pause. ⌘Space is not on the list — that belongs to Spotlight.")
+            }
+
             Section("Behaviour") {
                 Toggle(isOn: $store.config.showIsland) {
                     Text("Show the floating island")

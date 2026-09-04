@@ -10,6 +10,7 @@ final class AppModel: ObservableObject {
     let scheduler: Scheduler
     let presenter: AlertPresenter
     let island: IslandController
+    let commandBar: CommandBarController
 
     /// Set by the app scene so the island and the panel can open Settings.
     var openSettings: () -> Void = {}
@@ -21,10 +22,12 @@ final class AppModel: ObservableObject {
         let scheduler = Scheduler(store: store)
         let presenter = AlertPresenter()
         let island = IslandController(store: store, scheduler: scheduler)
+        let commandBar = CommandBarController(store: store, scheduler: scheduler)
         self.store = store
         self.scheduler = scheduler
         self.presenter = presenter
         self.island = island
+        self.commandBar = commandBar
 
         scheduler.onDue = { [weak store, weak presenter] reminder in
             guard let store, let presenter else { return }
@@ -80,6 +83,23 @@ final class AppModel: ObservableObject {
             },
             onOpenSettings: { [weak self] in self?.openSettings() }
         )
+
+        commandBar.onLog = { [weak self] reminder, kind in
+            guard let self else { return }
+            if !self.presenter.answerFromIsland(reminder, kind: kind) {
+                self.store.log(reminder, kind: kind)
+                self.scheduler.acknowledged(reminder)
+            }
+        }
+        commandBar.onOpenSettings = { [weak self] in self?.openSettings() }
+        commandBar.registerHotKey()
+
+        store.$config
+            .map(\.hotKey)
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak commandBar] _ in commandBar?.registerHotKey() }
+            .store(in: &cancellables)
 
         // Follow the setting without polling.
         store.$config
