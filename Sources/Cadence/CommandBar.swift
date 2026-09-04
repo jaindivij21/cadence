@@ -321,17 +321,6 @@ final class CommandBarController: ObservableObject {
         }
 
         commands.append(Command(
-            id: "island",
-            title: store.config.showIsland ? "Hide the island" : "Show the island",
-            subtitle: "The floating readout above your desktop",
-            symbol: "capsule",
-            tint: .teal,
-            trailing: nil
-        ) { [weak self] in
-            self?.store.config.showIsland.toggle()
-        })
-
-        commands.append(Command(
             id: "settings",
             title: "Settings",
             subtitle: "Reminders, schedules, your day",

@@ -55,8 +55,8 @@ enum AlertStyle: Codable, Hashable {
     /// Takes over every screen for `seconds`. Use it when you physically cannot
     /// look at the display anyway (eye breaks, drops).
     case blocking(seconds: Int)
-    /// Morphs the island in place (or a corner card, if the island is off).
-    /// `sticky` keeps it there until you answer it.
+    /// Drops a pill under the menu bar, which leaves as soon as it is answered.
+    /// `sticky` keeps it there until you do.
     case toast(sticky: Bool)
 
     var isBlocking: Bool {
@@ -67,7 +67,7 @@ enum AlertStyle: Codable, Hashable {
     var summary: String {
         switch self {
         case .blocking(let s):    return "Blocks screen · \(s)s"
-        case .toast(let sticky):  return sticky ? "Asks in the island · waits for you" : "Asks in the island"
+        case .toast(let sticky):  return sticky ? "Pill · waits for you" : "Pill · fades"
         }
     }
 }
@@ -165,11 +165,6 @@ struct DayLog: Codable {
 struct Config: Codable {
     var waking: TimeWindow = .defaultWaking
     var reminders: [Reminder] = Reminder.defaultSet
-    /// The floating glass readout above the desktop. The menu bar item stays
-    /// either way, so turning this off is not a dead end.
-    var showIsland: Bool = true
-    /// Where the island sits, in screen coordinates. Nil until it is dragged.
-    var islandCenter: [Double]? = nil
     /// Chord that summons the command bar. Never ⌘Space — that is Spotlight's,
     /// and Cadence has no business taking it.
     var hotKey: HotKeyChoice = .optionSpace

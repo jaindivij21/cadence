@@ -30,19 +30,13 @@ final class AlertPresenter: ObservableObject {
     var onSnooze: ((Reminder, Int) -> Void)?
     /// Optional "1750 / 3000 ml" badge shown alongside the name.
     var progressProvider: ((Reminder) -> String?)?
-    /// Tries to show the reminder inside the island. False means it is hidden
-    /// and the corner card should be used instead.
-    var presentInIsland: ((Reminder, String?) -> Bool)?
-    var dismissIsland: (() -> Void)?
-    /// Called when a full-screen break opens and closes, so the island can step
-    /// out of the way.
+    /// Called when a full-screen break opens and closes.
     var onBreakChange: ((Bool) -> Void)?
     var soundEnabled: Bool = true
 
+    private let pill = PillController()
     private var queue: [Reminder] = []
     private(set) var overlayWindows: [NSWindow] = []
-    private var toastWindow: NSPanel?
-    private var usingIsland = false
     private var breakTimer: Timer?
     private var toastTimer: Timer?
 
@@ -156,12 +150,13 @@ final class AlertPresenter: ObservableObject {
 
     private func showQuiet(_ reminder: Reminder) {
         activeQuiet = reminder
-        let progress = progressProvider?(reminder)
-
-        usingIsland = presentInIsland?(reminder, progress) ?? false
-        if !usingIsland {
-            showToastWindow(reminder, progress: progress)
-        }
+        pill.show(
+            reminder,
+            progress: progressProvider?(reminder),
+            onDone: { [weak self] in self?.finishQuiet(kind: .done) },
+            onSnooze: { [weak self] in self?.snoozeQuiet(minutes: reminder.snoozeMinutes) },
+            onSkip: { [weak self] in self?.finishQuiet(kind: .skipped) }
+        )
         play("Tink")
 
         if case .toast(let sticky) = reminder.alert, !sticky {
@@ -171,56 +166,6 @@ final class AlertPresenter: ObservableObject {
             RunLoop.main.add(timer, forMode: .common)
             toastTimer = timer
         }
-    }
-
-    private func showToastWindow(_ reminder: Reminder, progress: String?) {
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 160),
-            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-
-        let root = ToastView(
-            reminder: reminder,
-            progressText: progress,
-            onDone: { [weak self] in self?.finishQuiet(kind: .done) },
-            onSkip: { [weak self] in self?.finishQuiet(kind: .skipped) },
-            onSnooze: { [weak self] in self?.snoozeQuiet(minutes: reminder.snoozeMinutes) }
-        )
-        .measure { [weak panel] size in
-            guard let panel, size.width > 1, size.height > 1 else { return }
-            let top = panel.frame.maxY
-            panel.setFrame(
-                NSRect(x: panel.frame.minX, y: top - size.height, width: size.width, height: size.height),
-                display: true
-            )
-        }
-
-        let hosting = NSHostingView(rootView: root)
-        hosting.sizingOptions = []
-        panel.contentView = hosting
-
-        if let screen = NSScreen.main {
-            let visible = screen.visibleFrame
-            panel.setFrameOrigin(NSPoint(
-                x: visible.maxX - panel.frame.width - 16,
-                y: visible.maxY - panel.frame.height - 16
-            ))
-        }
-        panel.alphaValue = 0
-        panel.orderFrontRegardless()
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.28
-            panel.animator().alphaValue = 1
-        }
-        toastWindow = panel
     }
 
     private func finishQuiet(kind: EventKind) {
@@ -240,34 +185,18 @@ final class AlertPresenter: ObservableObject {
     }
 
     private func closeQuiet() {
-        if usingIsland {
-            dismissIsland?()
-            usingIsland = false
-        }
-        if let panel = toastWindow {
-            toastWindow = nil
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.22
-                panel.animator().alphaValue = 0
-            } completionHandler: {
-                panel.orderOut(nil)
-            }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+        pill.hide()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.drainQueue()
         }
     }
 
-    /// The island answers its own alert, so it reports back through here.
-    func answerFromIsland(_ reminder: Reminder, kind: EventKind) -> Bool {
+    /// Somewhere else answered this reminder — the command bar, the menu bar
+    /// panel — so the pill must come down with it.
+    @discardableResult
+    func answerElsewhere(_ reminder: Reminder, kind: EventKind) -> Bool {
         guard activeQuiet?.id == reminder.id else { return false }
         finishQuiet(kind: kind)
-        return true
-    }
-
-    func snoozeFromIsland(_ reminder: Reminder) -> Bool {
-        guard activeQuiet?.id == reminder.id else { return false }
-        snoozeQuiet(minutes: reminder.snoozeMinutes)
         return true
     }
 

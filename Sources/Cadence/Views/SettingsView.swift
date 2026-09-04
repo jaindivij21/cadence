@@ -2,9 +2,11 @@ import AppKit
 import ServiceManagement
 import SwiftUI
 
-/// A normal macOS settings window: a real sidebar and a grouped Form, so the
-/// system draws the glass, the insets and the controls. Nothing here is
-/// hand-painted.
+/// Settings is laid out by hand rather than by `Form`. A grouped Form gives you
+/// grey capsules stretched edge to edge with the control pinned to the far
+/// margin — correct, characterless, and unreadable at this width. The controls
+/// themselves stay standard, so they still pick up Liquid Glass; only the
+/// column, the rhythm and the hierarchy are ours.
 struct SettingsView: View {
     @EnvironmentObject var store: Store
 
@@ -15,8 +17,6 @@ struct SettingsView: View {
 
     @State private var selection: Selection?
 
-    /// `previewReminder` only exists so the preview renderer can open the
-    /// editor directly. Normal callers get the General pane.
     init(previewReminder: UUID? = nil) {
         _selection = State(initialValue: previewReminder.map { Selection.reminder($0) } ?? .general)
     }
@@ -24,12 +24,11 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView {
             sidebar
-                .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 300)
+                .navigationSplitViewColumnWidth(min: 232, ideal: 248, max: 300)
         } detail: {
             detail
         }
-        .frame(minWidth: 840, minHeight: 620)
-        .containerBackground(.ultraThinMaterial, for: .window)
+        .frame(minWidth: 860, minHeight: 640)
     }
 
     // MARK: - Sidebar
@@ -43,18 +42,18 @@ struct SettingsView: View {
                 ForEach(store.config.reminders) { reminder in
                     Label {
                         Text(reminder.name)
-                            .foregroundStyle(reminder.enabled ? Palette.text : Palette.textFaint)
                     } icon: {
                         Image(systemName: reminder.symbol)
-                            .foregroundStyle(reminder.enabled ? reminder.category.color : Palette.textFaint)
+                            .foregroundStyle(reminder.category.color)
                     }
+                    .opacity(reminder.enabled ? 1 : 0.45)
                     .tag(Selection.reminder(reminder.id))
                 }
             }
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) {
-            HStack {
+            HStack(spacing: 8) {
                 Menu {
                     Button("Blank reminder") {
                         add(Reminder(
@@ -75,21 +74,26 @@ struct SettingsView: View {
                         }
                     }
                 } label: {
-                    Label("Add", systemImage: "plus")
+                    Label("Add reminder", systemImage: "plus")
                 }
                 .menuStyle(.button)
-                .buttonStyle(.glass)
                 .fixedSize()
 
                 Spacer()
 
-                Button("Reset") {
-                    store.resetRemindersToDefaults()
-                    selection = .general
+                Menu {
+                    Button("Reset every reminder to the defaults", role: .destructive) {
+                        store.resetRemindersToDefaults()
+                        selection = .general
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
                 }
-                .buttonStyle(.glass)
-                .help("Replace every reminder with the defaults")
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+                .fixedSize()
             }
+            .controlSize(.small)
             .padding(12)
         }
     }
@@ -124,6 +128,109 @@ struct SettingsView: View {
     }
 }
 
+// MARK: - The column
+
+/// Every pane is the same shape: a fixed-width column, left aligned, with a
+/// large title and generous vertical rhythm. Nothing stretches to the window
+/// edge, so a wide window means more margin, not longer rows.
+private struct Pane<Content: View>: View {
+    let title: String
+    let subtitle: String?
+    var accessory: AnyView? = nil
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        MaybeScroll {
+            VStack(alignment: .leading, spacing: 34) {
+                HStack(alignment: .center, spacing: 14) {
+                    if let accessory { accessory }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title)
+                            .font(.ui(26, .semibold))
+                        if let subtitle {
+                            Text(subtitle)
+                                .font(.ui(13))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                content
+            }
+            .frame(width: 520, alignment: .leading)
+            .padding(.horizontal, 40)
+            .padding(.top, 34)
+            .padding(.bottom, 44)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// A titled run of rows. The title is a plain label, not a boxed header — the
+/// spacing does the grouping.
+private struct Group_<Content: View>: View {
+    let title: String
+    var footnote: String? = nil
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title.uppercased())
+                .font(.ui(10.5, .semibold))
+                .tracking(0.8)
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 16) {
+                content
+            }
+
+            if let footnote {
+                Text(footnote)
+                    .font(.ui(11.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
+            }
+        }
+    }
+}
+
+/// Label left, control right, inside the column. The control keeps its natural
+/// size instead of being flung at the window margin.
+private struct Row<Control: View>: View {
+    let label: String
+    var detail: String? = nil
+    @ViewBuilder var control: Control
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 20) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.ui(13))
+                if let detail {
+                    Text(detail)
+                        .font(.ui(11.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 12)
+            control
+                .fixedSize()
+        }
+    }
+}
+
+/// A real switch. `Toggle` on its own draws a checkbox outside a Form.
+private struct SwitchToggle: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle("", isOn: $isOn)
+            .toggleStyle(.switch)
+            .labelsHidden()
+    }
+}
+
 // MARK: - General
 
 private struct GeneralSettings: View {
@@ -131,80 +238,83 @@ private struct GeneralSettings: View {
     @State private var loginStatus: String?
 
     var body: some View {
-        Form {
-            Section {
-                DatePicker("Wake", selection: minuteBinding($store.config.waking.start), displayedComponents: .hourAndMinute)
-                DatePicker("Sleep", selection: minuteBinding($store.config.waking.end), displayedComponents: .hourAndMinute)
-            } header: {
-                Text("Your day")
-            } footer: {
-                Text("Anything scheduled a set number of times a day is spread across this window.")
-            }
-
-            Section {
-                Picker("Summon the command bar with", selection: $store.config.hotKey) {
-                    ForEach(HotKeyChoice.allCases) { choice in
-                        Text(choice.title).tag(choice)
-                    }
+        Pane(title: "Cadence", subtitle: "How and when it interrupts you") {
+            Group_(
+                title: "Your day",
+                footnote: "Anything scheduled a set number of times a day is spread evenly across this window."
+            ) {
+                Row(label: "Wake") {
+                    DatePicker("", selection: minuteBinding($store.config.waking.start), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .frame(width: 118)
                 }
-            } header: {
-                Text("Command bar")
-            } footer: {
-                Text("Press it anywhere to log something, start a break, or pause. ⌘Space is not on the list — that belongs to Spotlight.")
-            }
-
-            Section("Behaviour") {
-                Toggle(isOn: $store.config.showIsland) {
-                    Text("Show the floating island")
-                    Text("A glass readout that sits above your desktop. Drag it anywhere.")
-                }
-                Toggle(isOn: $store.config.soundEnabled) {
-                    Text("Play a sound with each reminder")
-                    Text("A soft system tone. Nothing else.")
-                }
-                Toggle(isOn: $store.config.menuBarCountdown) {
-                    Text("Show the countdown in the menu bar")
-                    Text("Turn this off for a plain icon.")
-                }
-                Toggle(isOn: $store.config.startAtLogin) {
-                    Text("Start Cadence at login")
-                    if let loginStatus {
-                        Text(loginStatus)
-                    }
-                }
-                .onChange(of: store.config.startAtLogin) { _, newValue in
-                    applyLoginItem(newValue)
+                Row(label: "Sleep") {
+                    DatePicker("", selection: minuteBinding($store.config.waking.end), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .frame(width: 118)
                 }
             }
 
-            Section("Timing") {
-                Stepper(value: $store.config.idleResetMinutes, in: 1...60) {
-                    LabeledContent("Reset repeating timers after being away") {
-                        Text("\(store.config.idleResetMinutes) min")
+            Group_(
+                title: "Command bar",
+                footnote: "Press it anywhere to log something, start a break or pause. ⌘Space is not on the list — that belongs to Spotlight."
+            ) {
+                Row(label: "Summon with") {
+                    Picker("", selection: $store.config.hotKey) {
+                        ForEach(HotKeyChoice.allCases) { choice in
+                            Text(choice.title).tag(choice)
+                        }
                     }
-                    Text("If you have not touched the keyboard for this long, the repeating clock starts over. You already had the break.")
-                }
-                Stepper(value: $store.config.slotGraceMinutes, in: 5...180, step: 5) {
-                    LabeledContent("Write off a missed slot after") {
-                        Text("\(store.config.slotGraceMinutes) min")
-                    }
-                    Text("A scheduled dose this far past its time is recorded as missed instead of firing late.")
+                    .labelsHidden()
+                    .frame(width: 150)
                 }
             }
 
-            Section {
-                LabeledContent("Stored on this Mac") {
+            Group_(title: "Behaviour") {
+                Row(label: "Sound with each reminder", detail: "A soft system tone. Nothing else.") {
+                    SwitchToggle(isOn: $store.config.soundEnabled)
+                }
+                Row(label: "Countdown in the menu bar", detail: "Off gives you a plain icon.") {
+                    SwitchToggle(isOn: $store.config.menuBarCountdown)
+                }
+                Row(label: "Start at login", detail: loginStatus) {
+                    SwitchToggle(isOn: $store.config.startAtLogin)
+                        .onChange(of: store.config.startAtLogin) { _, value in applyLoginItem(value) }
+                }
+            }
+
+            Group_(
+                title: "Timing",
+                footnote: "Cadence watches the keyboard, not you. Step away and the repeating clocks reset by themselves."
+            ) {
+                Row(
+                    label: "Reset repeating timers after",
+                    detail: "You already had the break."
+                ) {
+                    Stepper("\(store.config.idleResetMinutes) min", value: $store.config.idleResetMinutes, in: 1...60)
+                        .monospacedDigit()
+                }
+                Row(
+                    label: "Write off a missed slot after",
+                    detail: "Later than this it is recorded as missed, not fired late."
+                ) {
+                    Stepper("\(store.config.slotGraceMinutes) min", value: $store.config.slotGraceMinutes, in: 5...180, step: 5)
+                        .monospacedDigit()
+                }
+            }
+
+            Group_(
+                title: "Your data",
+                footnote: "Configuration and 30 days of history, in one file. Cadence has no network code — nothing is sent anywhere."
+            ) {
+                Row(label: "Stored on this Mac") {
                     Button("Reveal in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([Store.stateURL])
                     }
-                    .buttonStyle(.glass)
+                    .controlSize(.small)
                 }
-            } footer: {
-                Text("Your configuration and 30 days of history live in one file. Cadence has no network code — nothing is sent anywhere.")
             }
         }
-        .formStyle(.grouped)
-        .navigationTitle("General")
     }
 
     private func applyLoginItem(_ enabled: Bool) {
@@ -214,7 +324,7 @@ private struct GeneralSettings: View {
                 loginStatus = "Registered as a login item."
             } else {
                 try SMAppService.mainApp.unregister()
-                loginStatus = "Removed from login items."
+                loginStatus = nil
             }
         } catch {
             loginStatus = "Could not change it: \(error.localizedDescription)"
@@ -244,152 +354,151 @@ private struct ReminderEditor: View {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .interval: return "Every N minutes"
-            case .perDay:   return "N times a day"
-            case .fixed:    return "At set times"
+            case .interval: return "Interval"
+            case .perDay:   return "Per day"
+            case .fixed:    return "Set times"
             }
         }
     }
 
     var body: some View {
-        Form {
-            Section {
+        Pane(
+            title: reminder.name,
+            subtitle: "\(reminder.schedule.summary) · \(reminder.alert.summary)",
+            accessory: AnyView(
+                Image(systemName: reminder.symbol)
+                    .font(.ui(20, .semibold))
+                    .foregroundStyle(reminder.category.color)
+                    .frame(width: 46, height: 46)
+                    .background(
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .fill(reminder.category.color.opacity(0.15))
+                    )
+            )
+        ) {
+            Group_(title: "What it says") {
                 TextField("Name", text: $reminder.name)
                 TextField("Detail", text: $reminder.detail, axis: .vertical)
                     .lineLimit(2...4)
-                TextField("Button says", text: $reminder.actionLabel)
-                Picker("Category", selection: $reminder.category) {
-                    ForEach(Category.allCases) { category in
-                        Text(category.title).tag(category)
-                    }
+                Row(label: "Button says") {
+                    TextField("", text: $reminder.actionLabel).frame(width: 180)
                 }
-                Toggle("Enabled", isOn: $reminder.enabled)
-            } header: {
-                header
+                Row(label: "Category") {
+                    Picker("", selection: $reminder.category) {
+                        ForEach(Category.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 150)
+                }
+                Row(label: "Enabled") {
+                    SwitchToggle(isOn: $reminder.enabled)
+                }
             }
 
-            Section("When") {
-                Picker("Schedule", selection: scheduleKindBinding) {
-                    ForEach(ScheduleKind.allCases) { kind in
-                        Text(kind.title).tag(kind)
-                    }
+            Group_(title: "When") {
+                Picker("", selection: scheduleKindBinding) {
+                    ForEach(ScheduleKind.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
 
                 scheduleDetail
 
-                Toggle(isOn: Binding(
-                    get: { reminder.window != nil },
-                    set: { reminder.window = $0 ? TimeWindow(start: 9 * 60, end: 18 * 60) : nil }
-                )) {
-                    Text("Use its own window")
-                    Text("Otherwise it follows your waking hours.")
+                Row(label: "Use its own window", detail: "Otherwise it follows your waking hours.") {
+                    SwitchToggle(isOn: Binding(
+                        get: { reminder.window != nil },
+                        set: { reminder.window = $0 ? TimeWindow(start: 9 * 60, end: 18 * 60) : nil }
+                    ))
                 }
-
                 if reminder.window != nil {
-                    DatePicker("From", selection: minuteBinding(Binding(
-                        get: { reminder.window?.start ?? 9 * 60 },
-                        set: { reminder.window?.start = $0 }
-                    )), displayedComponents: .hourAndMinute)
-                    DatePicker("Until", selection: minuteBinding(Binding(
-                        get: { reminder.window?.end ?? 18 * 60 },
-                        set: { reminder.window?.end = $0 }
-                    )), displayedComponents: .hourAndMinute)
+                    Row(label: "From") {
+                        DatePicker("", selection: minuteBinding(Binding(
+                            get: { reminder.window?.start ?? 9 * 60 },
+                            set: { reminder.window?.start = $0 }
+                        )), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .frame(width: 118)
+                    }
+                    Row(label: "Until") {
+                        DatePicker("", selection: minuteBinding(Binding(
+                            get: { reminder.window?.end ?? 18 * 60 },
+                            set: { reminder.window?.end = $0 }
+                        )), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .frame(width: 118)
+                    }
                 }
             }
 
-            Section("How loud") {
-                Picker("Style", selection: Binding(
+            Group_(title: "How loud") {
+                Picker("", selection: Binding(
                     get: { reminder.alert.isBlocking },
                     set: { reminder.alert = $0 ? .blocking(seconds: 20) : .toast(sticky: true) }
                 )) {
                     Text("Take over the screen").tag(true)
-                    Text("Ask in the island").tag(false)
+                    Text("Drop a pill in").tag(false)
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
 
                 alertDetail
             }
 
-            Section {
-                LabeledContent("Amount each time") {
+            Group_(
+                title: "Counting",
+                footnote: "Give it an amount to track a running daily total, the way water does."
+            ) {
+                Row(label: "Each time") {
                     HStack(spacing: 8) {
                         TextField("", value: Binding(
                             get: { reminder.amount ?? 0 },
                             set: { reminder.amount = $0 > 0 ? $0 : nil }
                         ), format: .number)
-                        .frame(width: 80)
+                        .frame(width: 74)
                         TextField("unit", text: Binding(
                             get: { reminder.unit ?? "" },
                             set: { reminder.unit = $0.isEmpty ? nil : $0 }
                         ))
-                        .frame(width: 60)
+                        .frame(width: 56)
                     }
                 }
-                LabeledContent("Daily target") {
+                Row(label: "Daily target") {
                     TextField("", value: Binding(
                         get: { reminder.dailyTarget ?? 0 },
                         set: { reminder.dailyTarget = $0 > 0 ? $0 : nil }
                     ), format: .number)
-                    .frame(width: 80)
+                    .frame(width: 74)
                 }
-            } header: {
-                Text("Counting")
-            } footer: {
-                Text("Set an amount to track a running daily total, the way water does.")
             }
 
-            Section("Icon") {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(34), spacing: 8), count: 10), spacing: 8) {
+            Group_(title: "Icon") {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.fixed(38), spacing: 8), count: 10),
+                    spacing: 8
+                ) {
                     ForEach(Self.symbolChoices, id: \.self) { symbol in
+                        let picked = reminder.symbol == symbol
                         Button {
                             reminder.symbol = symbol
                         } label: {
                             Image(systemName: symbol)
                                 .font(.ui(14))
-                                .frame(width: 34, height: 34)
-                                .foregroundStyle(reminder.symbol == symbol ? reminder.category.color : Palette.textSecond)
-                                .glassSquircle(
-                                    radius: 10,
-                                    tint: reminder.symbol == symbol ? reminder.category.color : nil,
-                                    interactive: true
+                                .foregroundStyle(picked ? reminder.category.color : .secondary)
+                                .frame(width: 38, height: 38)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(picked ? reminder.category.color.opacity(0.18) : Color.primary.opacity(0.05))
                                 )
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.vertical, 4)
             }
 
-            Section {
-                Button("Delete this reminder", systemImage: "trash", role: .destructive, action: onDelete)
-                    .buttonStyle(.glass)
-            }
+            Button("Delete this reminder", systemImage: "trash", role: .destructive, action: onDelete)
+                .controlSize(.small)
         }
-        .formStyle(.grouped)
-        .navigationTitle(reminder.name)
-    }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: reminder.symbol)
-                .font(.ui(18, .semibold))
-                .foregroundStyle(reminder.category.color)
-                .frame(width: 44, height: 44)
-                .glassCircle(tint: reminder.category.color)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(reminder.name)
-                    .font(.ui(17, .semibold))
-                    .foregroundStyle(Palette.text)
-                Text("\(reminder.schedule.summary) · \(reminder.alert.summary)")
-                    .font(.ui(11.5))
-                    .foregroundStyle(Palette.textSecond)
-            }
-            Spacer()
-        }
-        .textCase(nil)
-        .padding(.bottom, 6)
     }
 
     private var scheduleKindBinding: Binding<ScheduleKind> {
@@ -415,48 +524,54 @@ private struct ReminderEditor: View {
     private var scheduleDetail: some View {
         switch reminder.schedule {
         case .everyMinutes(let minutes):
-            Stepper(value: Binding(
-                get: { minutes },
-                set: { reminder.schedule = .everyMinutes(max(1, $0)) }
-            ), in: 1...240, step: 5) {
-                LabeledContent("Repeat every") { Text("\(minutes) min") }
-                Text("Counted from the last time you answered it.")
+            Row(label: "Repeat every", detail: "Counted from the last time you answered it.") {
+                Stepper("\(minutes) min", value: Binding(
+                    get: { minutes },
+                    set: { reminder.schedule = .everyMinutes(max(1, $0)) }
+                ), in: 1...240, step: 5)
+                .monospacedDigit()
             }
 
         case .timesPerDay(let count):
-            Stepper(value: Binding(
-                get: { count },
-                set: { reminder.schedule = .timesPerDay(max(1, $0)) }
-            ), in: 1...24) {
-                LabeledContent("Times a day") { Text("\(count)×") }
-                Text("Spread evenly across the active window.")
+            Row(label: "Times a day", detail: "Spread evenly across the active window.") {
+                Stepper("\(count)×", value: Binding(
+                    get: { count },
+                    set: { reminder.schedule = .timesPerDay(max(1, $0)) }
+                ), in: 1...24)
+                .monospacedDigit()
             }
 
         case .atTimes(let times):
             ForEach(Array(times.enumerated()), id: \.offset) { index, minute in
-                HStack {
-                    DatePicker("Time \(index + 1)", selection: minuteBinding(Binding(
-                        get: { minute },
-                        set: { newValue in
+                Row(label: "Time \(index + 1)") {
+                    HStack(spacing: 8) {
+                        DatePicker("", selection: minuteBinding(Binding(
+                            get: { minute },
+                            set: { newValue in
+                                var updated = times
+                                updated[index] = newValue
+                                reminder.schedule = .atTimes(updated.sorted())
+                            }
+                        )), displayedComponents: .hourAndMinute)
+                        .labelsHidden()
+                        .frame(width: 118)
+
+                        Button {
                             var updated = times
-                            updated[index] = newValue
-                            reminder.schedule = .atTimes(updated.sorted())
+                            updated.remove(at: index)
+                            reminder.schedule = .atTimes(updated)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                                .foregroundStyle(.secondary)
                         }
-                    )), displayedComponents: .hourAndMinute)
-                    Button("Remove", systemImage: "minus.circle", role: .destructive) {
-                        var updated = times
-                        updated.remove(at: index)
-                        reminder.schedule = .atTimes(updated)
+                        .buttonStyle(.plain)
                     }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Palette.textSecond)
                 }
             }
             Button("Add a time", systemImage: "plus") {
                 reminder.schedule = .atTimes((times + [12 * 60]).sorted())
             }
-            .buttonStyle(.glass)
+            .controlSize(.small)
         }
     }
 
@@ -464,24 +579,24 @@ private struct ReminderEditor: View {
     private var alertDetail: some View {
         switch reminder.alert {
         case .blocking(let seconds):
-            Stepper(value: Binding(
-                get: { seconds },
-                set: { reminder.alert = .blocking(seconds: max(5, $0)) }
-            ), in: 5...300, step: 5) {
-                LabeledContent("Hold the screen for") { Text("\(seconds) sec") }
-                Text("It clears itself when the countdown ends.")
+            Row(label: "Hold the screen for", detail: "It clears itself when the countdown ends.") {
+                Stepper("\(seconds) sec", value: Binding(
+                    get: { seconds },
+                    set: { reminder.alert = .blocking(seconds: max(5, $0)) }
+                ), in: 5...300, step: 5)
+                .monospacedDigit()
             }
 
         case .toast(let sticky):
-            Toggle(isOn: Binding(
-                get: { sticky },
-                set: { reminder.alert = .toast(sticky: $0) }
-            )) {
-                Text("Wait until I answer it")
-                Text("Off means it fades after 30 seconds and is logged as missed.")
+            Row(label: "Wait until I answer", detail: "Off means it fades after 30 seconds and is logged as missed.") {
+                SwitchToggle(isOn: Binding(
+                    get: { sticky },
+                    set: { reminder.alert = .toast(sticky: $0) }
+                ))
             }
-            Stepper(value: $reminder.snoozeMinutes, in: 1...120, step: 5) {
-                LabeledContent("Snooze button adds") { Text("\(reminder.snoozeMinutes) min") }
+            Row(label: "Snooze adds") {
+                Stepper("\(reminder.snoozeMinutes) min", value: $reminder.snoozeMinutes, in: 1...120, step: 5)
+                    .monospacedDigit()
             }
         }
     }

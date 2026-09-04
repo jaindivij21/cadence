@@ -56,8 +56,7 @@ struct BreakOverlayView: View {
                 .contentTransition(.numericText(countsDown: true))
                 .animation(.snappy, value: session.remaining)
         }
-        .frame(width: 220, height: 220)
-        .glassCircle(tint: accent.opacity(0.25))
+        .frame(width: 236, height: 236)
         .animation(.linear(duration: 1), value: session.progress)
     }
 

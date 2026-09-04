@@ -9,7 +9,6 @@ final class AppModel: ObservableObject {
     let store: Store
     let scheduler: Scheduler
     let presenter: AlertPresenter
-    let island: IslandController
     let commandBar: CommandBarController
 
     /// Set by the app scene so the island and the panel can open Settings.
@@ -21,12 +20,10 @@ final class AppModel: ObservableObject {
         let store = Store()
         let scheduler = Scheduler(store: store)
         let presenter = AlertPresenter()
-        let island = IslandController(store: store, scheduler: scheduler)
         let commandBar = CommandBarController(store: store, scheduler: scheduler)
         self.store = store
         self.scheduler = scheduler
         self.presenter = presenter
-        self.island = island
         self.commandBar = commandBar
 
         scheduler.onDue = { [weak store, weak presenter] reminder in
@@ -52,41 +49,13 @@ final class AppModel: ObservableObject {
             return "\(Fmt.amountString(store.today.total(for: reminder.id))) / \(Fmt.amountString(target)) \(unit)"
         }
 
-        presenter.presentInIsland = { [weak island] reminder, progress in
-            island?.present(reminder, progress: progress) ?? false
-        }
 
-        presenter.dismissIsland = { [weak island] in
-            island?.dismissAlert()
-        }
 
-        presenter.onBreakChange = { [weak island] blocking in
-            island?.sync(suppressed: blocking)
-        }
 
-        island.configure(
-            onAnswer: { [weak self] reminder, kind in
-                guard let self else { return }
-                // If this is the reminder the island is currently asking about,
-                // let the presenter close it out. Otherwise it is a quick log
-                // from the menu or a counter.
-                if !self.presenter.answerFromIsland(reminder, kind: kind) {
-                    self.store.log(reminder, kind: kind)
-                    self.scheduler.acknowledged(reminder)
-                }
-            },
-            onSnooze: { [weak self] reminder in
-                guard let self else { return }
-                if !self.presenter.snoozeFromIsland(reminder) {
-                    self.scheduler.snoozed(reminder, minutes: reminder.snoozeMinutes)
-                }
-            },
-            onOpenSettings: { [weak self] in self?.openSettings() }
-        )
 
         commandBar.onLog = { [weak self] reminder, kind in
             guard let self else { return }
-            if !self.presenter.answerFromIsland(reminder, kind: kind) {
+            if !self.presenter.answerElsewhere(reminder, kind: kind) {
                 self.store.log(reminder, kind: kind)
                 self.scheduler.acknowledged(reminder)
             }
@@ -101,23 +70,14 @@ final class AppModel: ObservableObject {
             .sink { [weak commandBar] _ in commandBar?.registerHotKey() }
             .store(in: &cancellables)
 
-        // Follow the setting without polling.
-        store.$config
-            .map(\.showIsland)
-            .removeDuplicates()
-            .sink { [weak island, weak presenter] _ in
-                island?.sync(suppressed: presenter?.activeBreak != nil)
-            }
-            .store(in: &cancellables)
 
-        island.sync(suppressed: false)
         scheduler.start()
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if SmokeTest.runIfRequested() {
+        if GlassProbe.runIfRequested() || WindowCapture.runIfRequested() || SmokeTest.runIfRequested() {
             NSApp.terminate(nil)
             return
         }

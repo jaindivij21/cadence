@@ -24,16 +24,11 @@ struct CommandBarView: View {
             footer
         }
         .frame(width: 660)
-        .background(Backdrop(material: .hudWindow).clipShape(shape))
-        .glassEffect(.clear, in: .rect(cornerRadius: 26))
+        .glassPanel(radius: 26)
         .onAppear { focused = true }
         .onChange(of: controller.visible) { _, visible in
             if visible { focused = true }
         }
-    }
-
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 26, style: .continuous)
     }
 
     // MARK: - Field
