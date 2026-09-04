@@ -63,6 +63,7 @@ final class PillController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false          // the glass carries its own
+        // Above everything, on every space, including over a full-screen app.
         panel.level = .statusBar
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
@@ -120,7 +121,7 @@ final class PillController {
     /// Centred at the top of the active screen, just below the menu bar, where
     /// macOS itself puts transient status.
     private static func place(_ panel: NSPanel, size: CGSize) {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = NSScreen.active else { return }
         let visible = screen.visibleFrame
         panel.setFrame(
             NSRect(

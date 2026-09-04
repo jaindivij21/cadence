@@ -2,6 +2,11 @@ import SwiftUI
 
 /// The quiet alert. One glass capsule that drops under the menu bar, says its
 /// piece, and leaves. It is never on screen when it has nothing to ask.
+///
+/// The width is fixed on purpose. An earlier version let the capsule size to
+/// its contents, and a reminder with a long detail line stretched it clean off
+/// the screen. A pill is a pill; the text truncates to fit it, and the full
+/// wording lives in Settings and on the break screen.
 struct PillView: View {
     let reminder: Reminder
     let progress: String?
@@ -12,25 +17,33 @@ struct PillView: View {
     var onSkip: () -> Void
     var onCompanion: (Reminder) -> Void = { _ in }
 
+    /// Two chips at most, or the actions get squeezed out.
+    private var shownCompanions: [Reminder] { Array(companions.prefix(2)) }
+
+    private var width: CGFloat {
+        shownCompanions.isEmpty ? 480 : 480 + CGFloat(shownCompanions.count) * 116
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: reminder.symbol)
-                .font(.ui(14, .semibold))
+                .font(.ui(15, .semibold))
                 .foregroundStyle(reminder.category.color)
-                .frame(width: 22)
+                .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(reminder.name)
                     .font(.ui(14, .semibold))
+                    .lineLimit(1)
                 Text(progress ?? reminder.detail)
                     .font(.ui(12))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Spacer(minLength: 14)
-
-            ForEach(companions.prefix(2)) { companion in
+            ForEach(shownCompanions) { companion in
                 let taken = answeredCompanions.contains(companion.id)
                 Button {
                     onCompanion(companion)
@@ -39,19 +52,23 @@ struct PillView: View {
                         Image(systemName: taken ? "checkmark" : companion.symbol)
                             .font(.ui(10, .semibold))
                         Text(companion.name)
+                            .lineLimit(1)
                     }
                 }
                 .buttonStyle(.bordered)
                 .tint(companion.category.color)
                 .disabled(taken)
+                .fixedSize()
             }
 
             Button(reminder.actionLabel, action: onDone)
                 .buttonStyle(.borderedProminent)
                 .tint(reminder.category.color)
+                .fixedSize()
 
             Button("\(reminder.snoozeMinutes)m", action: onSnooze)
                 .buttonStyle(.bordered)
+                .fixedSize()
 
             Button {
                 onSkip()
@@ -59,7 +76,7 @@ struct PillView: View {
                 Image(systemName: "xmark")
                     .font(.ui(10, .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 20, height: 20)
+                    .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -67,11 +84,9 @@ struct PillView: View {
         .controlSize(.small)
         .padding(.leading, 18)
         .padding(.trailing, 12)
-        .frame(height: 54)
-        .fixedSize(horizontal: true, vertical: false)
-        .frame(maxWidth: 560)
+        .frame(width: width, height: 56)
         .glassCapsule(interactive: false)
         // Room for the glass shadow, so the window does not clip it.
-        .padding(14)
+        .padding(16)
     }
 }

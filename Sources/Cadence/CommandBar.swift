@@ -249,7 +249,7 @@ final class CommandBarController: ObservableObject {
     }
 
     private func centre(_ panel: NSPanel) {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = NSScreen.active else { return }
         let visible = screen.visibleFrame
         panel.setFrameOrigin(NSPoint(
             x: visible.midX - panel.frame.width / 2,

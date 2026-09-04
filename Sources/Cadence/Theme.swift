@@ -139,6 +139,23 @@ struct ProgressRing: View {
     }
 }
 
+// MARK: - Screens
+
+extension NSScreen {
+    /// The display you are actually working on.
+    ///
+    /// `NSScreen.main` is the screen holding the key window, which for a menu
+    /// bar app with no windows of its own is whatever some other app last
+    /// focused — often the wrong monitor entirely. The pointer is a far better
+    /// guess at where you are looking.
+    static var active: NSScreen? {
+        let mouse = NSEvent.mouseLocation
+        return NSScreen.screens.first { $0.frame.contains(mouse) }
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+    }
+}
+
 // MARK: - Layout plumbing
 
 /// Reports a view's laid-out size, so a borderless window can resize itself to
