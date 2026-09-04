@@ -18,6 +18,9 @@ final class Scheduler: ObservableObject {
     /// Sorted soonest first. Reminders finished for the day are left out.
     @Published private(set) var upcoming: [Upcoming] = []
     @Published private(set) var now: Date = Date()
+    /// Something is due but the quiet stretch after the last interruption has
+    /// not run out yet.
+    @Published var heldUntil: Date?
     @Published var pausedUntil: Date? {
         didSet { recompute() }
     }
@@ -50,10 +53,9 @@ final class Scheduler: ObservableObject {
         recompute()
     }
 
-    /// The window every slot is spread across: learned from use when there is
-    /// enough history, otherwise whatever is set by hand.
+    /// The one window: the hours you are at the laptop.
     var waking: TimeWindow {
-        store.effectiveWaking
+        store.effectiveWork
     }
 
     /// Screen off or locked, so the interval clocks hold rather than run.
@@ -206,7 +208,7 @@ final class Scheduler: ObservableObject {
     /// When this reminder fires next, or nil if it is finished for the day.
     func nextFire(for reminder: Reminder) -> Date? {
         guard reminder.enabled else { return nil }
-        let window = reminder.activeWindow(global: waking)
+        let window = store.window(for: reminder)
 
         switch reminder.schedule {
         case .everyMinutes(let minutes):

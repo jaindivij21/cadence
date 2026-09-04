@@ -26,7 +26,8 @@ struct TimeWindow: Codable, Hashable {
         minute >= start && minute <= end
     }
 
-    static let defaultWaking = TimeWindow(start: 8 * 60, end: 23 * 60)
+    /// Used until there is enough history to learn from.
+    static let defaultWork = TimeWindow(start: 10 * 60, end: 18 * 60)
 }
 
 // MARK: - Scheduling
@@ -72,6 +73,30 @@ enum AlertStyle: Codable, Hashable {
     }
 }
 
+/// When a reminder is allowed to fire.
+///
+/// There is only one window, and it is the time you are at the laptop. A wider
+/// "waking" window was tempting and dishonest: Cadence cannot reach you with
+/// the lid shut, so a drop scheduled for half ten at night was never a reminder
+/// — it was a thing that quietly got marked as assumed the next morning.
+/// Everything is spread across the hours it can actually speak to you.
+enum ScheduleWindow: String, Codable, CaseIterable, Identifiable {
+    /// The hours you are at the laptop.
+    case work
+    /// A fixed time set on the reminder itself. Outside the window this can
+    /// only ever be assumed, never prompted.
+    case custom
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .work:   return "While I'm at the laptop"
+        case .custom: return "A fixed time"
+        }
+    }
+}
+
 // MARK: - Reminder
 
 struct Reminder: Codable, Identifiable, Hashable {
@@ -84,7 +109,9 @@ struct Reminder: Codable, Identifiable, Hashable {
     var alert: AlertStyle
     var enabled: Bool = true
 
-    /// Overrides the global waking window when set.
+    /// Which window this belongs to. `custom` uses `window` below.
+    var appliesDuring: ScheduleWindow = .work
+    /// Only read when `appliesDuring` is `.custom`.
     var window: TimeWindow? = nil
 
     /// For countable reminders (water). `amount` is added to the daily total
@@ -110,6 +137,13 @@ struct Reminder: Codable, Identifiable, Hashable {
 
     func activeWindow(global: TimeWindow) -> TimeWindow { window ?? global }
 
+    /// Slot times land on the quarter hour. Spreading six drops across a
+    /// fifteen-hour day gives you 11:18 and 2:06, which nobody reads as a time
+    /// they are meant to do something at.
+    static func round(toQuarter minute: MinuteOfDay) -> MinuteOfDay {
+        Int((Double(minute) / 15).rounded()) * 15
+    }
+
     /// The clock times this reminder should fire at today, for slot-based
     /// schedules. Interval schedules return an empty array.
     func slots(global: TimeWindow) -> [MinuteOfDay] {
@@ -122,14 +156,17 @@ struct Reminder: Codable, Identifiable, Hashable {
         case .timesPerDay(let n):
             guard n > 0 else { return [] }
             let shift = slotOffsetMinutes
-            if n == 1 { return [w.start + w.span / 2 + shift] }
+            if n == 1 { return [Reminder.round(toQuarter: w.start + w.span / 2 + shift)] }
             // Evenly spaced, inset from both edges so nothing lands the second
             // you wake up or the second you go to bed.
             let inset = min(30, w.span / (n * 2))
             let lo = w.start + inset
             let hi = w.end - inset
             let step = Double(hi - lo) / Double(n - 1)
-            return (0..<n).map { min(w.end, lo + shift + Int((Double($0) * step).rounded())) }
+            return (0..<n).map {
+                let raw = min(w.end, lo + shift + Int((Double($0) * step).rounded()))
+                return min(w.end, Reminder.round(toQuarter: raw))
+            }
         }
     }
 }
@@ -170,6 +207,10 @@ struct DayLog: Codable {
     /// When the Mac was not in use, so a slot that passed can be told apart
     /// from one you were present for and ignored.
     var away: [AwayPeriod] = []
+    /// Quarter-hour buckets (0..95) the laptop was actually in use. This is how
+    /// the working window is learned: the hours you are usually at it, not the
+    /// one evening you answered an email at eleven.
+    var activeBuckets: [Int] = []
 
     /// True when the Mac was demonstrably not in use at that moment: inside a
     /// recorded gap, or before it was first opened today.
@@ -208,7 +249,6 @@ struct DayLog: Codable {
 // MARK: - Config
 
 struct Config: Codable {
-    var waking: TimeWindow = .defaultWaking
     var reminders: [Reminder] = Reminder.defaultSet
     /// Chord that summons the command bar. Never ⌘Space — that is Spotlight's,
     /// and Cadence has no business taking it.
@@ -225,10 +265,10 @@ struct Config: Codable {
     /// instead of arriving on its own a minute later. Drink the water during
     /// the eye break.
     var groupWindowMinutes: Int = 12
-    /// Work the waking window out from when the Mac is actually in use, rather
-    /// than asking. `waking` is the fallback until there is enough history, and
-    /// the override when this is off.
-    var learnWakingWindow: Bool = true
+    /// The only window: when you are at the laptop. Learned from the hours you
+    /// actually use it, with this as the fallback and the manual override.
+    var work: TimeWindow = TimeWindow(start: 10 * 60, end: 18 * 60)
+    var learnWorkWindow: Bool = true
 }
 
 // MARK: - Defaults

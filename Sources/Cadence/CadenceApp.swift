@@ -29,6 +29,7 @@ final class AppModel: ObservableObject {
         scheduler.onDue = { [weak store, weak presenter] reminder in
             guard let store, let presenter else { return }
             presenter.soundEnabled = store.config.soundEnabled
+            presenter.minimumGap = Double(store.config.minimumGapMinutes) * 60
             presenter.present(reminder)
         }
 
@@ -39,6 +40,20 @@ final class AppModel: ObservableObject {
 
         presenter.onSnooze = { [weak scheduler] reminder, minutes in
             scheduler?.snoozed(reminder, minutes: minutes)
+        }
+
+        // Grouping: anything falling due about now rides along with whatever is
+        // already interrupting, rather than arriving on its own a minute later.
+        presenter.companionProvider = { [weak scheduler] reminder in
+            scheduler?.companions(for: reminder) ?? []
+        }
+
+        presenter.onClaim = { [weak scheduler] companions in
+            scheduler?.claim(companions)
+        }
+
+        presenter.onHold = { [weak scheduler] until in
+            scheduler?.heldUntil = until
         }
 
         presenter.progressProvider = { [weak store] reminder in

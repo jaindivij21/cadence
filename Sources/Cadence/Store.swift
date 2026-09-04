@@ -112,6 +112,8 @@ final class Store: ObservableObject {
         ensureToday()
         guard !days.isEmpty else { return }
         if days[0].firstSeen == nil { days[0].firstSeen = date }
+        let bucket = Store.minuteOfDay(date) / 15
+        if !days[0].activeBuckets.contains(bucket) { days[0].activeBuckets.append(bucket) }
         // Only write when the minute changes, so this does not thrash the file.
         if let last = days[0].lastSeen, Int(date.timeIntervalSince(last)) < 60 { return }
         days[0].lastSeen = date
@@ -120,7 +122,7 @@ final class Store: ObservableObject {
     /// The times this reminder fires today, honouring any alignment to another
     /// reminder's timetable.
     func slots(for reminder: Reminder) -> [MinuteOfDay] {
-        let window = effectiveWaking
+        let window = self.window(for: reminder)
         guard let anchorID = reminder.alignsWith,
               let anchor = config.reminders.first(where: { $0.id == anchorID }),
               case .timesPerDay(let wanted) = reminder.schedule,
@@ -129,7 +131,7 @@ final class Store: ObservableObject {
             return reminder.slots(global: window)
         }
 
-        let grid = anchor.slots(global: window)
+        let grid = anchor.slots(global: self.window(for: anchor))
         guard grid.count >= wanted else { return reminder.slots(global: window) }
         if wanted == 1 { return [grid[0]] }
 
@@ -147,26 +149,36 @@ final class Store: ObservableObject {
         days[0].away.append(AwayPeriod(start: start, end: end))
     }
 
-    /// The window slots are spread across. Learned from the last two weeks of
-    /// use when there is enough of it, otherwise the one set by hand.
-    var effectiveWaking: TimeWindow {
-        guard config.learnWakingWindow, let learned = learnedWaking else { return config.waking }
+
+
+    /// When you are usually at the laptop. A quarter hour counts only if it is
+    /// used on at least half the recent days, which trims the odd late night
+    /// and the one early start without needing you to describe your routine.
+    var learnedWork: TimeWindow? {
+        let recent = days.prefix(14).filter { !$0.activeBuckets.isEmpty }
+        guard recent.count >= 3 else { return nil }
+
+        var tally: [Int: Int] = [:]
+        for day in recent {
+            for bucket in Set(day.activeBuckets) { tally[bucket, default: 0] += 1 }
+        }
+        let threshold = max(2, recent.count / 2)
+        let usual = tally.filter { $0.value >= threshold }.keys.sorted()
+        guard let first = usual.first, let last = usual.last, last > first else { return nil }
+        return TimeWindow(start: first * 15, end: (last + 1) * 15)
+    }
+
+    var effectiveWork: TimeWindow {
+        guard config.learnWorkWindow, let learned = learnedWork else { return config.work }
         return learned
     }
 
-    /// Needs at least three days before it will claim to know anything.
-    var learnedWaking: TimeWindow? {
-        let recent = days.prefix(14).compactMap { day -> (Int, Int)? in
-            guard let first = day.firstSeen, let last = day.lastSeen else { return nil }
-            let start = Store.minuteOfDay(first)
-            let end = Store.minuteOfDay(last)
-            guard end > start else { return nil }
-            return (start, end)
+    /// The hours a given reminder is allowed to fire in.
+    func window(for reminder: Reminder) -> TimeWindow {
+        switch reminder.appliesDuring {
+        case .work:   return effectiveWork
+        case .custom: return reminder.window ?? effectiveWork
         }
-        guard recent.count >= 3 else { return nil }
-        let start = recent.map(\.0).reduce(0, +) / recent.count
-        let end = recent.map(\.1).reduce(0, +) / recent.count
-        return TimeWindow(start: start, end: end)
     }
 
     var learnedDayCount: Int {

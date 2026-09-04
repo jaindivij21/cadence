@@ -54,7 +54,7 @@ enum SmokeTest {
             name: "check", detail: "", symbol: "bell.fill", category: .eye,
             schedule: .timesPerDay(4), alert: .toast(sticky: true)
         )
-        let slots = sample.slots(global: .defaultWaking)
+        let slots = sample.slots(global: .defaultWork)
         if slots.count != 4 {
             failures.append("timesPerDay(4) produced \(slots.count) slots")
         }
@@ -62,7 +62,7 @@ enum SmokeTest {
             failures.append("slots are not in order: \(slots)")
         }
         if let first = slots.first, let last = slots.last,
-           first < TimeWindow.defaultWaking.start || last > TimeWindow.defaultWaking.end {
+           first < TimeWindow.defaultWork.start || last > TimeWindow.defaultWork.end {
             failures.append("slots fall outside the waking window: \(slots)")
         }
 

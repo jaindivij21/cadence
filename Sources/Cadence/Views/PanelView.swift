@@ -189,7 +189,13 @@ struct PanelView: View {
             return "done"
         }
         let seconds = Int(fire.timeIntervalSince(scheduler.now))
-        if seconds <= 0 { return "now" }
+        if seconds <= 0 {
+            // Due, but waiting out the quiet stretch after the last one.
+            if let held = scheduler.heldUntil, held > scheduler.now {
+                return "in \(max(1, Int(held.timeIntervalSince(scheduler.now)) / 60))m"
+            }
+            return "now"
+        }
         if seconds < 3600 { return "\(max(1, seconds / 60))m" }
         return Fmt.clock.string(from: fire)
     }

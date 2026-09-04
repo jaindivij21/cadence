@@ -39,6 +39,9 @@ final class AlertPresenter: ObservableObject {
     var companionProvider: ((Reminder) -> [Reminder])?
     /// Tells the scheduler those companions are spoken for.
     var onClaim: (([Reminder]) -> Void)?
+    /// Reports when the queue is being held back, so the interface can say so
+    /// instead of claiming something is due "now" and then doing nothing.
+    var onHold: ((Date?) -> Void)?
     var soundEnabled: Bool = true
 
     private let pill = PillController()
@@ -74,10 +77,13 @@ final class AlertPresenter: ObservableObject {
         if let last = lastAlertEnded {
             let waited = Date().timeIntervalSince(last)
             if waited < minimumGap {
-                scheduleDrain(in: minimumGap - waited)
+                let remaining = minimumGap - waited
+                onHold?(Date().addingTimeInterval(remaining))
+                scheduleDrain(in: remaining)
                 return
             }
         }
+        onHold?(nil)
 
         // Blocking alerts jump the queue — they are the ones you cannot miss.
         if let idx = queue.firstIndex(where: { $0.alert.isBlocking }) {

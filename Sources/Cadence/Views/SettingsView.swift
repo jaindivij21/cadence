@@ -240,24 +240,24 @@ private struct GeneralSettings: View {
     var body: some View {
         Pane(title: "Cadence", subtitle: "How and when it interrupts you") {
             Group_(
-                title: "Your day",
-                footnote: "Anything scheduled a set number of times a day is spread evenly across this window."
+                title: "Your hours",
+                footnote: "Everything is spread across the hours you are at the laptop, because those are the only hours Cadence can actually reach you. A reminder set for half ten at night with the lid shut is not a reminder."
             ) {
                 Row(
-                    label: "Work it out from my Mac",
+                    label: "Work them out from my Mac",
                     detail: learnedSummary
                 ) {
-                    SwitchToggle(isOn: $store.config.learnWakingWindow)
+                    SwitchToggle(isOn: $store.config.learnWorkWindow)
                 }
 
-                if !store.config.learnWakingWindow || store.learnedWaking == nil {
-                    Row(label: "Wake") {
-                        DatePicker("", selection: minuteBinding($store.config.waking.start), displayedComponents: .hourAndMinute)
+                if !store.config.learnWorkWindow || store.learnedWork == nil {
+                    Row(label: "From") {
+                        DatePicker("", selection: minuteBinding($store.config.work.start), displayedComponents: .hourAndMinute)
                             .labelsHidden()
                             .frame(width: 118)
                     }
-                    Row(label: "Sleep") {
-                        DatePicker("", selection: minuteBinding($store.config.waking.end), displayedComponents: .hourAndMinute)
+                    Row(label: "Until") {
+                        DatePicker("", selection: minuteBinding($store.config.work.end), displayedComponents: .hourAndMinute)
                             .labelsHidden()
                             .frame(width: 118)
                     }
@@ -321,12 +321,13 @@ private struct GeneralSettings: View {
 
     /// What the learned window currently says, in plain words.
     private var learnedSummary: String {
-        guard let learned = store.learnedWaking else {
-            return "Watching. It needs three days of use before it will guess; until then it uses the times below."
+        guard let learned = store.learnedWork else {
+            return "Watching. It needs three days before it will guess; until then it uses the times below."
         }
         let days = store.learnedDayCount
         return "\(learned.start.asClockString) to \(learned.end.asClockString), from \(days) day\(days == 1 ? "" : "s") of use."
     }
+
 
     private func applyLoginItem(_ enabled: Bool) {
         do {
@@ -415,13 +416,14 @@ private struct ReminderEditor: View {
 
                 scheduleDetail
 
-                Row(label: "Use its own window", detail: "Otherwise it follows your waking hours.") {
-                    SwitchToggle(isOn: Binding(
-                        get: { reminder.window != nil },
-                        set: { reminder.window = $0 ? TimeWindow(start: 9 * 60, end: 18 * 60) : nil }
-                    ))
+                Row(label: "Applies during", detail: appliesDetail) {
+                    Picker("", selection: $reminder.appliesDuring) {
+                        ForEach(ScheduleWindow.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .frame(width: 150)
                 }
-                if reminder.window != nil {
+                if reminder.appliesDuring == .custom {
                     Row(label: "From") {
                         DatePicker("", selection: minuteBinding(Binding(
                             get: { reminder.window?.start ?? 9 * 60 },
@@ -509,6 +511,13 @@ private struct ReminderEditor: View {
 
             Button("Delete this reminder", systemImage: "trash", role: .destructive, action: onDelete)
                 .controlSize(.small)
+        }
+    }
+
+    private var appliesDetail: String {
+        switch reminder.appliesDuring {
+        case .work:   return "Spread across the hours you are at the laptop."
+        case .custom: return "A fixed clock time. Outside your hours Cadence cannot prompt you — it will only be assumed."
         }
     }
 
