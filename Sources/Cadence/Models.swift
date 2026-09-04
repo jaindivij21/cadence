@@ -55,7 +55,8 @@ enum AlertStyle: Codable, Hashable {
     /// Takes over every screen for `seconds`. Use it when you physically cannot
     /// look at the display anyway (eye breaks, drops).
     case blocking(seconds: Int)
-    /// A card in the corner. `sticky` keeps it until you answer it.
+    /// Morphs the island in place (or a corner card, if the island is off).
+    /// `sticky` keeps it there until you answer it.
     case toast(sticky: Bool)
 
     var isBlocking: Bool {
@@ -66,7 +67,7 @@ enum AlertStyle: Codable, Hashable {
     var summary: String {
         switch self {
         case .blocking(let s):    return "Blocks screen · \(s)s"
-        case .toast(let sticky):  return sticky ? "Corner card · waits for you" : "Corner card"
+        case .toast(let sticky):  return sticky ? "Asks in the island · waits for you" : "Asks in the island"
         }
     }
 }
@@ -164,6 +165,11 @@ struct DayLog: Codable {
 struct Config: Codable {
     var waking: TimeWindow = .defaultWaking
     var reminders: [Reminder] = Reminder.defaultSet
+    /// The floating glass readout above the desktop. The menu bar item stays
+    /// either way, so turning this off is not a dead end.
+    var showIsland: Bool = true
+    /// Where the island sits, in screen coordinates. Nil until it is dragged.
+    var islandCenter: [Double]? = nil
     var soundEnabled: Bool = true
     var menuBarCountdown: Bool = true
     /// If you have been away from the keyboard this long, interval reminders

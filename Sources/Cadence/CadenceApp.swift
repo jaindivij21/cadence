@@ -1,21 +1,30 @@
 import AppKit
+import Combine
 import SwiftUI
 
-/// Owns the three long-lived objects and wires them together. Nothing else in
-/// the app knows about more than one of them at a time.
+/// Owns the long-lived objects and wires them together. Nothing else in the app
+/// knows about more than one of them at a time.
 @MainActor
 final class AppModel: ObservableObject {
     let store: Store
     let scheduler: Scheduler
     let presenter: AlertPresenter
+    let island: IslandController
+
+    /// Set by the app scene so the island and the panel can open Settings.
+    var openSettings: () -> Void = {}
+
+    private var cancellables: Set<AnyCancellable> = []
 
     init() {
         let store = Store()
         let scheduler = Scheduler(store: store)
         let presenter = AlertPresenter()
+        let island = IslandController(store: store, scheduler: scheduler)
         self.store = store
         self.scheduler = scheduler
         self.presenter = presenter
+        self.island = island
 
         scheduler.onDue = { [weak store, weak presenter] reminder in
             guard let store, let presenter else { return }
@@ -37,21 +46,62 @@ final class AppModel: ObservableObject {
                   let target = reminder.dailyTarget, target > 0,
                   let unit = reminder.unit
             else { return nil }
-            let total = store.today.total(for: reminder.id)
-            return "\(Int(total))/\(Int(target)) \(unit)"
+            return "\(Fmt.amountString(store.today.total(for: reminder.id))) / \(Fmt.amountString(target)) \(unit)"
         }
 
+        presenter.presentInIsland = { [weak island] reminder, progress in
+            island?.present(reminder, progress: progress) ?? false
+        }
+
+        presenter.dismissIsland = { [weak island] in
+            island?.dismissAlert()
+        }
+
+        presenter.onBreakChange = { [weak island] blocking in
+            island?.sync(suppressed: blocking)
+        }
+
+        island.configure(
+            onAnswer: { [weak self] reminder, kind in
+                guard let self else { return }
+                // If this is the reminder the island is currently asking about,
+                // let the presenter close it out. Otherwise it is a quick log
+                // from the menu or a counter.
+                if !self.presenter.answerFromIsland(reminder, kind: kind) {
+                    self.store.log(reminder, kind: kind)
+                    self.scheduler.acknowledged(reminder)
+                }
+            },
+            onSnooze: { [weak self] reminder in
+                guard let self else { return }
+                if !self.presenter.snoozeFromIsland(reminder) {
+                    self.scheduler.snoozed(reminder, minutes: reminder.snoozeMinutes)
+                }
+            },
+            onOpenSettings: { [weak self] in self?.openSettings() }
+        )
+
+        // Follow the setting without polling.
+        store.$config
+            .map(\.showIsland)
+            .removeDuplicates()
+            .sink { [weak island, weak presenter] _ in
+                island?.sync(suppressed: presenter?.activeBreak != nil)
+            }
+            .store(in: &cancellables)
+
+        island.sync(suppressed: false)
         scheduler.start()
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if PreviewRenderer.runIfRequested() {
+        if SmokeTest.runIfRequested() {
             NSApp.terminate(nil)
             return
         }
-        // Menu bar only. No Dock icon, no app switcher entry.
+        // Menu bar and floating island only. No Dock icon, no app switcher entry.
         NSApp.setActivationPolicy(.accessory)
     }
 
@@ -64,12 +114,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct CadenceApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         MenuBarExtra {
-            PanelView()
+            PanelView(onOpenSettings: showSettings)
                 .environmentObject(model.store)
                 .environmentObject(model.scheduler)
+                .onAppear { model.openSettings = showSettings }
         } label: {
             MenuBarLabel(scheduler: model.scheduler, store: model.store)
         }
@@ -80,8 +132,14 @@ struct CadenceApp: App {
                 .environmentObject(model.store)
                 .environmentObject(model.scheduler)
         }
-        .defaultSize(width: 860, height: 620)
+        .defaultSize(width: 900, height: 660)
+        .windowStyle(.hiddenTitleBar)
         .commandsRemoved()
+    }
+
+    private func showSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: "settings")
     }
 }
 
@@ -96,7 +154,7 @@ private struct MenuBarLabel: View {
             Image(systemName: symbol)
             if store.config.menuBarCountdown, let text = countdownText {
                 Text(text)
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .font(.ui(11, .medium))
                     .monospacedDigit()
             }
         }

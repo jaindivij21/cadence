@@ -24,7 +24,7 @@ final class Store: ObservableObject {
         return base.appendingPathComponent("Cadence", isDirectory: true)
     }()
 
-    private static var stateURL: URL { directory.appendingPathComponent("state.json") }
+    static var stateURL: URL { directory.appendingPathComponent("state.json") }
 
     private struct Persisted: Codable {
         var config: Config

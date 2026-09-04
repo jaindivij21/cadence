@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The quiet alert: a card in the top-right that never steals focus.
+/// The fallback alert, used only when the island is switched off. Same shape
+/// language as the island's alert capsule, parked in the corner.
 struct ToastView: View {
     let reminder: Reminder
     var progressText: String? = nil
@@ -8,102 +9,55 @@ struct ToastView: View {
     var onSkip: () -> Void
     var onSnooze: () -> Void
 
-    @State private var appeared = false
-
-    private var accent: Color { reminder.category.color }
-
     var body: some View {
-        HStack(spacing: 0) {
-            Rectangle()
-                .fill(accent)
-                .frame(width: 3)
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: reminder.symbol)
+                .font(.ui(14, .semibold))
+                .foregroundStyle(reminder.category.color)
+                .frame(width: 34, height: 34)
+                .glassCircle(tint: reminder.category.color.opacity(0.4))
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 11) {
-                    ZStack {
-                        Circle().fill(accent.opacity(0.15))
-                        Image(systemName: reminder.symbol)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(accent)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(reminder.name)
+                        .font(.ui(14, .semibold))
+                    if let progressText {
+                        Text(progressText)
+                            .font(.ui(12))
+                            .foregroundStyle(.secondary)
                     }
-                    .frame(width: 32, height: 32)
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 8) {
-                            Text(reminder.name)
-                                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                .foregroundStyle(Palette.textPrime)
-                            if let progressText {
-                                Text(progressText)
-                                    .font(.cadenceMono)
-                                    .foregroundStyle(accent)
-                            }
-                        }
-                        Text(reminder.detail)
-                            .font(.system(size: 12, weight: .regular, design: .rounded))
-                            .foregroundStyle(Palette.textSecond)
-                            .lineSpacing(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
                     Spacer(minLength: 0)
-
-                    Button(action: onSkip) {
+                    Button {
+                        onSkip()
+                    } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(Palette.textFaint)
+                            .font(.ui(10, .bold))
+                            .foregroundStyle(.secondary)
                             .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Skip this one")
                 }
+
+                Text(reminder.detail)
+                    .font(.ui(12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 8) {
-                    Button(action: onDone) {
-                        Text(reminder.actionLabel)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .padding(.horizontal, 14)
-                            .frame(height: 30)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(accent.opacity(0.9))
-                            )
-                            .foregroundStyle(Palette.ink)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: onSnooze) {
-                        Text("Snooze \(reminder.snoozeMinutes)m")
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .padding(.horizontal, 12)
-                            .frame(height: 30)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(Palette.hairline, lineWidth: 1)
-                            )
-                            .foregroundStyle(Palette.textSecond)
-                    }
-                    .buttonStyle(.plain)
-
+                    Button(reminder.actionLabel, action: onDone)
+                        .buttonStyle(.borderedProminent)
+                        .tint(reminder.category.color)
+                    Button("Snooze \(reminder.snoozeMinutes)m", action: onSnooze)
+                        .buttonStyle(.bordered)
                     Spacer(minLength: 0)
                 }
+                .controlSize(.small)
             }
-            .padding(14)
         }
-        .background(
-            ZStack {
-                VisualEffectBackground(material: .hudWindow)
-                Palette.surface.opacity(0.86)
-            }
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Palette.hairline, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.45), radius: 24, y: 10)
-        .padding(6)
-        .scaleEffect(appeared ? 1 : 0.97)
-        .onAppear { withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { appeared = true } }
+        .padding(14)
+        .frame(width: 360, alignment: .leading)
+        .glassSquircle(radius: 22)
+        .padding(10)
     }
 }
