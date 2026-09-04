@@ -143,7 +143,7 @@ struct PanelView: View {
 
     private func row(_ reminder: Reminder) -> some View {
         let target = slotTarget(reminder)
-        let done = store.today.doneCount(for: reminder.id)
+        let done = store.today.takenCount(for: reminder.id)
 
         return HStack(spacing: 10) {
             Image(systemName: reminder.symbol)

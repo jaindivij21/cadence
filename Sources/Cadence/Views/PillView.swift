@@ -5,9 +5,12 @@ import SwiftUI
 struct PillView: View {
     let reminder: Reminder
     let progress: String?
+    var companions: [Reminder] = []
+    var answeredCompanions: Set<UUID> = []
     var onDone: () -> Void
     var onSnooze: () -> Void
     var onSkip: () -> Void
+    var onCompanion: (Reminder) -> Void = { _ in }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -26,6 +29,22 @@ struct PillView: View {
             }
 
             Spacer(minLength: 14)
+
+            ForEach(companions.prefix(2)) { companion in
+                let taken = answeredCompanions.contains(companion.id)
+                Button {
+                    onCompanion(companion)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: taken ? "checkmark" : companion.symbol)
+                            .font(.ui(10, .semibold))
+                        Text(companion.name)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .tint(companion.category.color)
+                .disabled(taken)
+            }
 
             Button(reminder.actionLabel, action: onDone)
                 .buttonStyle(.borderedProminent)

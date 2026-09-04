@@ -95,6 +95,16 @@ struct Reminder: Codable, Identifiable, Hashable {
 
     var snoozeMinutes: Int = 10
 
+    /// Shifts this reminder's slots off the shared grid, for things that must
+    /// not coincide.
+    var slotOffsetMinutes: Int = 0
+
+    /// Ride on another reminder's timetable instead of spreading independently.
+    /// A drop taken four times a day picks four of the six times you are
+    /// already stopping for the six-times-a-day one, so you are interrupted six
+    /// times rather than twelve.
+    var alignsWith: UUID? = nil
+
     /// Verb on the confirm button, e.g. "Logged", "Done", "Drank 250 ml".
     var actionLabel: String = "Done"
 
@@ -111,14 +121,15 @@ struct Reminder: Codable, Identifiable, Hashable {
             return times.sorted()
         case .timesPerDay(let n):
             guard n > 0 else { return [] }
-            if n == 1 { return [w.start + w.span / 2] }
+            let shift = slotOffsetMinutes
+            if n == 1 { return [w.start + w.span / 2 + shift] }
             // Evenly spaced, inset from both edges so nothing lands the second
             // you wake up or the second you go to bed.
             let inset = min(30, w.span / (n * 2))
             let lo = w.start + inset
             let hi = w.end - inset
             let step = Double(hi - lo) / Double(n - 1)
-            return (0..<n).map { lo + Int((Double($0) * step).rounded()) }
+            return (0..<n).map { min(w.end, lo + shift + Int((Double($0) * step).rounded())) }
         }
     }
 }
@@ -127,6 +138,11 @@ struct Reminder: Codable, Identifiable, Hashable {
 
 enum EventKind: String, Codable {
     case done, skipped, missed
+    /// The slot passed while the Mac was asleep, locked or shut. You were
+    /// living your life; Cadence assumes you took it rather than accusing you
+    /// of missing it. Counts as taken, but never adds to a measured total —
+    /// you cannot assume millilitres.
+    case assumed
 }
 
 struct LogEvent: Codable, Identifiable, Hashable {
@@ -137,12 +153,30 @@ struct LogEvent: Codable, Identifiable, Hashable {
     var amount: Double? = nil
 }
 
+/// A stretch when the Mac was asleep, locked or shut.
+struct AwayPeriod: Codable, Hashable {
+    var start: Date
+    var end: Date
+
+    func contains(_ date: Date) -> Bool { date >= start && date <= end }
+}
+
 struct DayLog: Codable {
     var day: String                 // "yyyy-MM-dd"
     var events: [LogEvent] = []
     /// First and last moment the screen was on and unlocked that day.
     var firstSeen: Date? = nil
     var lastSeen: Date? = nil
+    /// When the Mac was not in use, so a slot that passed can be told apart
+    /// from one you were present for and ignored.
+    var away: [AwayPeriod] = []
+
+    /// True when the Mac was demonstrably not in use at that moment: inside a
+    /// recorded gap, or before it was first opened today.
+    func wasAway(at date: Date) -> Bool {
+        if let first = firstSeen, date < first { return true }
+        return away.contains { $0.contains(date) }
+    }
 
     func events(for reminder: UUID) -> [LogEvent] {
         events.filter { $0.reminderID == reminder }
@@ -154,6 +188,14 @@ struct DayLog: Codable {
 
     func doneCount(for reminder: UUID) -> Int {
         events.reduce(into: 0) { $0 += ($1.reminderID == reminder && $1.kind == .done ? 1 : 0) }
+    }
+
+    /// What the counters show: things you did, plus things that happened while
+    /// the Mac was off.
+    func takenCount(for reminder: UUID) -> Int {
+        events.reduce(into: 0) {
+            $0 += ($1.reminderID == reminder && ($1.kind == .done || $1.kind == .assumed) ? 1 : 0)
+        }
     }
 
     func total(for reminder: UUID) -> Double {
@@ -176,6 +218,13 @@ struct Config: Codable {
     var startAtLogin: Bool = false
     /// How late a missed slot can be before it is written off instead of fired.
     var slotGraceMinutes: Int = 25
+    /// Never interrupt twice inside this. Answering one reminder buys you a
+    /// stretch of quiet before the next can appear.
+    var minimumGapMinutes: Int = 3
+    /// Anything falling due within this of an interruption rides along with it
+    /// instead of arriving on its own a minute later. Drink the water during
+    /// the eye break.
+    var groupWindowMinutes: Int = 12
     /// Work the waking window out from when the Mac is actually in use, rather
     /// than asking. `waking` is the fallback until there is enough history, and
     /// the override when this is off.
@@ -222,6 +271,18 @@ enum PresetLibrary {
             category: .eye,
             schedule: .everyMinutes(20),
             alert: .blocking(seconds: 20),
+            actionLabel: "Done"
+        )
+    }
+
+    static var coldCompress: Reminder {
+        Reminder(
+            name: "Cold Compress",
+            detail: "Something cold over closed eyes for a few minutes. It calms swelling and irritation — the opposite job to a warm compress.",
+            symbol: "snowflake",
+            category: .eye,
+            schedule: .timesPerDay(2),
+            alert: .toast(sticky: true),
             actionLabel: "Done"
         )
     }
@@ -343,10 +404,10 @@ enum PresetLibrary {
     static var supplements: Reminder {
         Reminder(
             name: "Supplements",
-            detail: "Take them with food so they actually absorb.",
+            detail: "With your largest meal, so the fat-soluble ones actually absorb. Keep a few hours clear of any medication — zinc, calcium, magnesium and iron all block absorption.",
             symbol: "cross.vial.fill",
             category: .immunity,
-            schedule: .atTimes([9 * 60 + 30]),
+            schedule: .atTimes([13 * 60 + 30]),
             alert: .toast(sticky: true),
             actionLabel: "Taken"
         )
@@ -428,7 +489,7 @@ enum PresetLibrary {
 
     static var groups: [PresetGroup] {
         [
-            PresetGroup(name: "Screen & eyes", reminders: [eyeBreak, distanceFocus, warmCompress]),
+            PresetGroup(name: "Screen & eyes", reminders: [eyeBreak, distanceFocus, coldCompress, warmCompress]),
             PresetGroup(name: "Medication", reminders: [doses(6), doses(4), doses(2), morningMeds, eveningMeds]),
             PresetGroup(name: "Hydration", reminders: [water, electrolytes]),
             PresetGroup(name: "Immunity & recovery", reminders: [coldExposure, daylight, supplements, breathwork, screensDown]),

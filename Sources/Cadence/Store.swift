@@ -117,6 +117,36 @@ final class Store: ObservableObject {
         days[0].lastSeen = date
     }
 
+    /// The times this reminder fires today, honouring any alignment to another
+    /// reminder's timetable.
+    func slots(for reminder: Reminder) -> [MinuteOfDay] {
+        let window = effectiveWaking
+        guard let anchorID = reminder.alignsWith,
+              let anchor = config.reminders.first(where: { $0.id == anchorID }),
+              case .timesPerDay(let wanted) = reminder.schedule,
+              wanted > 0
+        else {
+            return reminder.slots(global: window)
+        }
+
+        let grid = anchor.slots(global: window)
+        guard grid.count >= wanted else { return reminder.slots(global: window) }
+        if wanted == 1 { return [grid[0]] }
+
+        // Spread the chosen ones evenly across the anchor's times: four of six
+        // becomes the 1st, 3rd, 4th and 6th, not the first four in a row.
+        let step = Double(grid.count - 1) / Double(wanted - 1)
+        return (0..<wanted).map { grid[Int((Double($0) * step).rounded())] }
+    }
+
+    /// Records a stretch when the Mac was not in use, so slots that passed
+    /// during it can be assumed rather than counted against you.
+    func noteAway(from start: Date, to end: Date) {
+        ensureToday()
+        guard !days.isEmpty, end > start else { return }
+        days[0].away.append(AwayPeriod(start: start, end: end))
+    }
+
     /// The window slots are spread across. Learned from the last two weeks of
     /// use when there is enough of it, otherwise the one set by hand.
     var effectiveWaking: TimeWindow {

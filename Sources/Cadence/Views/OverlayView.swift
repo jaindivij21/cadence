@@ -7,6 +7,7 @@ struct BreakOverlayView: View {
     @ObservedObject var session: AlertPresenter.BreakSession
     var onDone: () -> Void
     var onSkip: () -> Void
+    var onCompanion: (Reminder) -> Void
 
     private var accent: Color { session.reminder.category.color }
 
@@ -18,11 +19,12 @@ struct BreakOverlayView: View {
             Backdrop(material: .fullScreenUI)
                 .ignoresSafeArea()
 
-            VStack(spacing: 44) {
+            VStack(spacing: 40) {
                 name
                 dial
                 instruction
                 controls
+                if !session.companions.isEmpty { companions }
             }
             .padding(60)
         }
@@ -66,6 +68,45 @@ struct BreakOverlayView: View {
             .multilineTextAlignment(.center)
             .lineSpacing(6)
             .frame(maxWidth: 560)
+    }
+
+    /// You are already standing here with your eyes shut. Anything else falling
+    /// due in the next few minutes may as well happen now, rather than pulling
+    /// you out of your work again a minute later.
+    private var companions: some View {
+        VStack(spacing: 14) {
+            Text(companionHeading)
+                .font(.ui(12))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                ForEach(session.companions) { companion in
+                    let taken = session.answeredCompanions.contains(companion.id)
+                    Button {
+                        onCompanion(companion)
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: taken ? "checkmark" : companion.symbol)
+                                .font(.ui(11, .semibold))
+                            Text(companion.name)
+                                .font(.ui(13))
+                        }
+                        .foregroundStyle(taken ? AnyShapeStyle(.secondary) : AnyShapeStyle(companion.category.color))
+                    }
+                    .buttonStyle(.glass)
+                    .disabled(taken)
+                }
+            }
+        }
+        .animation(.smooth(duration: 0.25), value: session.answeredCompanions)
+    }
+
+    /// Several drops at one stop need spacing, or the second washes the first
+    /// straight out.
+    private var companionHeading: String {
+        let drops = session.companions.filter { $0.alert.isBlocking && $0.category == .eye }
+        if drops.isEmpty { return "While you're here" }
+        return "Also now — leave about five minutes between each"
     }
 
     private var controls: some View {

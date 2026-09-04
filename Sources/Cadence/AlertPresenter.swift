@@ -13,6 +13,9 @@ final class AlertPresenter: ObservableObject {
         @Published var remaining: Int
         @Published var total: Int
         @Published var canDismiss: Bool = false
+        /// Small things worth doing while you are already interrupted.
+        @Published var companions: [Reminder] = []
+        @Published var answeredCompanions: Set<UUID> = []
 
         init(reminder: Reminder, seconds: Int) {
             self.reminder = reminder
@@ -32,6 +35,10 @@ final class AlertPresenter: ObservableObject {
     var progressProvider: ((Reminder) -> String?)?
     /// Called when a full-screen break opens and closes.
     var onBreakChange: ((Bool) -> Void)?
+    /// Other reminders falling due about now, to be offered in the same breath.
+    var companionProvider: ((Reminder) -> [Reminder])?
+    /// Tells the scheduler those companions are spoken for.
+    var onClaim: (([Reminder]) -> Void)?
     var soundEnabled: Bool = true
 
     private let pill = PillController()
@@ -39,6 +46,13 @@ final class AlertPresenter: ObservableObject {
     private(set) var overlayWindows: [NSWindow] = []
     private var breakTimer: Timer?
     private var toastTimer: Timer?
+    /// When the last interruption ended, so the next one cannot tread on it.
+    private var lastAlertEnded: Date?
+    private var quietCompanions: [Reminder] = []
+    private var answeredQuiet: Set<UUID> = []
+    private var cooldownTimer: Timer?
+    /// Quiet stretch owed after any alert. Set from config each time one fires.
+    var minimumGap: TimeInterval = 180
 
     // MARK: - Entry point
 
@@ -53,12 +67,33 @@ final class AlertPresenter: ObservableObject {
 
     private func drainQueue() {
         guard activeBreak == nil, activeQuiet == nil, !queue.isEmpty else { return }
+
+        // Answering one reminder buys a stretch of quiet. Without this the eye
+        // break ends and the water prompt lands twenty seconds later, which is
+        // two interruptions where the point was to have one.
+        if let last = lastAlertEnded {
+            let waited = Date().timeIntervalSince(last)
+            if waited < minimumGap {
+                scheduleDrain(in: minimumGap - waited)
+                return
+            }
+        }
+
         // Blocking alerts jump the queue — they are the ones you cannot miss.
         if let idx = queue.firstIndex(where: { $0.alert.isBlocking }) {
             showBreak(queue.remove(at: idx))
         } else {
             showQuiet(queue.removeFirst())
         }
+    }
+
+    private func scheduleDrain(in seconds: TimeInterval) {
+        cooldownTimer?.invalidate()
+        let timer = Timer(timeInterval: max(1, seconds), repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.drainQueue() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        cooldownTimer = timer
     }
 
     /// Clears a reminder that was dismissed without an explicit answer.
@@ -71,6 +106,8 @@ final class AlertPresenter: ObservableObject {
     private func showBreak(_ reminder: Reminder) {
         guard case .blocking(let seconds) = reminder.alert else { return }
         let session = BreakSession(reminder: reminder, seconds: seconds)
+        session.companions = companionProvider?(reminder) ?? []
+        onClaim?(session.companions)
         activeBreak = session
         onBreakChange?(true)
 
@@ -92,7 +129,11 @@ final class AlertPresenter: ObservableObject {
                 rootView: BreakOverlayView(
                     session: session,
                     onDone: { [weak self] in self?.finishBreak(kind: .done) },
-                    onSkip: { [weak self] in self?.finishBreak(kind: .skipped) }
+                    onSkip: { [weak self] in self?.finishBreak(kind: .skipped) },
+                    onCompanion: { [weak self] companion in
+                        session.answeredCompanions.insert(companion.id)
+                        self?.onAnswer?(companion, .done)
+                    }
                 )
             )
             window.alphaValue = 0
@@ -140,7 +181,12 @@ final class AlertPresenter: ObservableObject {
             windows.forEach { $0.orderOut(nil) }
         }
 
+        for companion in session.companions where !session.answeredCompanions.contains(companion.id) {
+            onAnswer?(companion, .skipped)
+        }
+
         onBreakChange?(false)
+        lastAlertEnded = Date()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             self?.drainQueue()
         }
@@ -150,12 +196,22 @@ final class AlertPresenter: ObservableObject {
 
     private func showQuiet(_ reminder: Reminder) {
         activeQuiet = reminder
+        let companions = companionProvider?(reminder) ?? []
+        onClaim?(companions)
+        quietCompanions = companions
+        answeredQuiet = []
+
         pill.show(
             reminder,
             progress: progressProvider?(reminder),
+            companions: companions,
             onDone: { [weak self] in self?.finishQuiet(kind: .done) },
             onSnooze: { [weak self] in self?.snoozeQuiet(minutes: reminder.snoozeMinutes) },
-            onSkip: { [weak self] in self?.finishQuiet(kind: .skipped) }
+            onSkip: { [weak self] in self?.finishQuiet(kind: .skipped) },
+            onCompanion: { [weak self] companion in
+                self?.answeredQuiet.insert(companion.id)
+                self?.onAnswer?(companion, .done)
+            }
         )
         play("Tink")
 
@@ -185,6 +241,12 @@ final class AlertPresenter: ObservableObject {
     }
 
     private func closeQuiet() {
+        for companion in quietCompanions where !answeredQuiet.contains(companion.id) {
+            onAnswer?(companion, .skipped)
+        }
+        quietCompanions = []
+        answeredQuiet = []
+        lastAlertEnded = Date()
         pill.hide()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.drainQueue()

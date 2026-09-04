@@ -1,6 +1,36 @@
 import AppKit
 import SwiftUI
 
+/// Holds which companions have been ticked, so the pill can grey them out
+/// without the controller having to rebuild the whole view.
+private struct PillHost: View {
+    let reminder: Reminder
+    let progress: String?
+    let companions: [Reminder]
+    let onDone: () -> Void
+    let onSnooze: () -> Void
+    let onSkip: () -> Void
+    let onCompanion: (Reminder) -> Void
+
+    @State private var answered: Set<UUID> = []
+
+    var body: some View {
+        PillView(
+            reminder: reminder,
+            progress: progress,
+            companions: companions,
+            answeredCompanions: answered,
+            onDone: onDone,
+            onSnooze: onSnooze,
+            onSkip: onSkip,
+            onCompanion: { companion in
+                answered.insert(companion.id)
+                onCompanion(companion)
+            }
+        )
+    }
+}
+
 /// Owns the transient alert pill: a borderless panel that drops in under the
 /// menu bar when something is due and is torn down the moment it is answered.
 ///
@@ -16,9 +46,11 @@ final class PillController {
     func show(
         _ reminder: Reminder,
         progress: String?,
+        companions: [Reminder] = [],
         onDone: @escaping () -> Void,
         onSnooze: @escaping () -> Void,
-        onSkip: @escaping () -> Void
+        onSkip: @escaping () -> Void,
+        onCompanion: @escaping (Reminder) -> Void = { _ in }
     ) {
         hide()
 
@@ -36,12 +68,14 @@ final class PillController {
         panel.ignoresMouseEvents = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 
-        let root = PillView(
+        let root = PillHost(
             reminder: reminder,
             progress: progress,
+            companions: companions,
             onDone: onDone,
             onSnooze: onSnooze,
-            onSkip: onSkip
+            onSkip: onSkip,
+            onCompanion: onCompanion
         )
         .measure { [weak panel] size in
             guard let panel, size.width > 1, size.height > 1 else { return }

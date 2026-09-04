@@ -266,7 +266,7 @@ final class CommandBarController: ObservableObject {
         var commands: [Command] = []
 
         for reminder in store.config.reminders where reminder.enabled {
-            let done = store.today.doneCount(for: reminder.id)
+            let done = store.today.takenCount(for: reminder.id)
             let target = slotTarget(reminder)
 
             commands.append(Command(

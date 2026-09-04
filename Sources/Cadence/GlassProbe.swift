@@ -144,8 +144,9 @@ enum WindowCapture {
         let session = AlertPresenter.BreakSession(reminder: PresetLibrary.eyeBreak, seconds: 20)
         session.remaining = 13
         session.canDismiss = true
+        session.companions = store.config.reminders.filter { !$0.alert.isBlocking }.prefix(2).map { $0 }
         shoot("overlay", size: CGSize(width: 1280, height: 800), into: dir) {
-            AnyView(BreakOverlayView(session: session, onDone: {}, onSkip: {}))
+            AnyView(BreakOverlayView(session: session, onDone: {}, onSkip: {}, onCompanion: { _ in }))
         }
 
         if let water = store.config.reminders.first(where: { $0.category == .hydration }) {
