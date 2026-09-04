@@ -73,6 +73,51 @@ enum SmokeTest {
             }
         }
 
+        // A file written by an older version must still load. This is the bug
+        // that repeatedly wiped a real configuration: synthesized Codable
+        // ignores default values, so any newly added setting made every
+        // existing file undecodable, and the fallback then saved over it.
+        let legacy = """
+        {
+          "config": {
+            "reminders": [
+              {"id":"11111111-1111-1111-1111-111111111111","name":"Old Drops",
+               "detail":"kept","symbol":"drop.fill","category":"eye",
+               "schedule":{"timesPerDay":{"_0":6}},
+               "alert":{"blocking":{"seconds":180}},
+               "enabled":true,"snoozeMinutes":10,"actionLabel":"Taken",
+               "appliesDuring":"day"},
+              {"name":"Sparse","schedule":{"timesPerDay":{"_0":2}}}
+            ],
+            "waking": {"start":480,"end":1380},
+            "learnWakingWindow": true,
+            "unknownFutureSetting": 42
+          },
+          "days": []
+        }
+        """
+        do {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let restored = try decoder.decode(Store.Persisted.self, from: Data(legacy.utf8))
+            if restored.config.reminders.count != 2 {
+                failures.append("legacy file lost reminders: kept \(restored.config.reminders.count) of 2")
+            }
+            if restored.config.reminders.first?.name != "Old Drops" {
+                failures.append("legacy reminder did not survive")
+            }
+            // A window case that no longer exists must degrade, not delete.
+            if restored.config.reminders.first?.appliesDuring != .work {
+                failures.append("a retired appliesDuring value did not fall back to .work")
+            }
+            // A reminder missing almost every field must still come through.
+            if restored.config.reminders.last?.symbol != "bell.fill" {
+                failures.append("sparse reminder did not pick up defaults")
+            }
+        } catch {
+            failures.append("a file from an older version no longer loads: \(error)")
+        }
+
         // Round-tripping config must not lose anything.
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

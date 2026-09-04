@@ -26,25 +26,63 @@ final class Store: ObservableObject {
 
     static var stateURL: URL { directory.appendingPathComponent("state.json") }
 
-    private struct Persisted: Codable {
+    struct Persisted: Codable {
         var config: Config
         var days: [DayLog]
     }
 
+    /// True when there is a state file we could not read. While this is set the
+    /// store will not write, so a decoding bug can never overwrite the thing it
+    /// failed to understand.
+    private(set) var readOnlyAfterFailure = false
+
     init() {
-        let loaded = Store.load()
-        config = loaded?.config ?? Config()
-        days = loaded?.days ?? []
+        switch Store.load() {
+        case .loaded(let persisted):
+            config = persisted.config
+            days = persisted.days
+        case .noFile:
+            config = Config()
+            days = []
+        case .unreadable(let error):
+            // Keep the file exactly as it is and run on defaults for this
+            // session. Losing an afternoon of settings is recoverable; silently
+            // overwriting the only copy is not.
+            config = Config()
+            days = []
+            readOnlyAfterFailure = true
+            Store.preserveUnreadableFile()
+            NSLog("Cadence: could not read state.json (\(error)). Left it untouched; not saving this session.")
+        }
         ensureToday()
     }
 
     // MARK: - Loading and saving
 
-    private static func load() -> Persisted? {
-        guard let data = try? Data(contentsOf: stateURL) else { return nil }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(Persisted.self, from: data)
+    enum LoadResult {
+        case loaded(Persisted)
+        case noFile
+        case unreadable(Error)
+    }
+
+    private static func load() -> LoadResult {
+        guard FileManager.default.fileExists(atPath: stateURL.path) else { return .noFile }
+        do {
+            let data = try Data(contentsOf: stateURL)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return .loaded(try decoder.decode(Persisted.self, from: data))
+        } catch {
+            return .unreadable(error)
+        }
+    }
+
+    /// Keeps a dated copy of a file we could not parse, so nothing is ever lost
+    /// to a change in the model.
+    private static func preserveUnreadableFile() {
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let copy = directory.appendingPathComponent("state-unreadable-\(stamp).json")
+        try? FileManager.default.copyItem(at: stateURL, to: copy)
     }
 
     private func scheduleSave() {
@@ -57,6 +95,7 @@ final class Store: ObservableObject {
     }
 
     func saveNow() {
+        guard !readOnlyAfterFailure else { return }
         let payload = Persisted(config: config, days: days)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
