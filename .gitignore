@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+Package.resolved
+Cadence.app/
+*.iconset/
+*.icns
+.DS_Store
