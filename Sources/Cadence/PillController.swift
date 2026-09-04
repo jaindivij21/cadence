@@ -1,4 +1,6 @@
 import AppKit
+import Carbon.HIToolbox
+import CoreGraphics
 import SwiftUI
 
 /// Holds which companions have been ticked, so the pill can grey them out
@@ -40,6 +42,23 @@ private struct PillHost: View {
 @MainActor
 final class PillController {
     private var panel: NSPanel?
+
+    /// Space answers the pill without reaching for the mouse.
+    ///
+    /// The pill never takes focus, by design — a reminder must not yank your
+    /// cursor out of what you are writing. So the only way to hear a bare
+    /// spacebar is to claim it system-wide, and a claimed space is a space that
+    /// never reaches your document.
+    ///
+    /// The compromise: claim it only while you are demonstrably not typing.
+    /// This polls the keyboard's idle time and holds the key only after a few
+    /// quiet seconds, releasing it within a second of you starting to type
+    /// again. Hit space mid-sentence and it goes where you meant it to.
+    private let spaceKey = HotKey(identifier: 2)
+    private var spaceWatchdog: Timer?
+    private var confirm: (() -> Void)?
+    /// Seconds of no typing before space belongs to the pill.
+    private let quietBeforeClaiming: Double = 3
 
     var isShowing: Bool { panel != nil }
 
@@ -90,6 +109,8 @@ final class PillController {
 
         PillController.place(panel, size: panel.frame.size)
         self.panel = panel
+        confirm = onDone
+        startWatchingForQuiet()
 
         // Drop in from just above its resting place.
         let resting = panel.frame
@@ -106,6 +127,7 @@ final class PillController {
     }
 
     func hide() {
+        stopWatchingForQuiet()
         guard let panel else { return }
         self.panel = nil
         NSAnimationContext.runAnimationGroup { context in
@@ -115,6 +137,38 @@ final class PillController {
             panel.animator().alphaValue = 0
         } completionHandler: {
             panel.orderOut(nil)
+        }
+    }
+
+    // MARK: - Spacebar
+
+    private func startWatchingForQuiet() {
+        stopWatchingForQuiet()
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.reconsiderSpace() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        spaceWatchdog = timer
+        reconsiderSpace()
+    }
+
+    private func stopWatchingForQuiet() {
+        spaceWatchdog?.invalidate()
+        spaceWatchdog = nil
+        spaceKey.unregister()
+        confirm = nil
+    }
+
+    private func reconsiderSpace() {
+        let idle = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .keyDown)
+        let quiet = idle >= quietBeforeClaiming
+
+        if quiet, !spaceKey.isRegistered {
+            spaceKey.register(keyCode: UInt32(kVK_Space), modifiers: 0) { [weak self] in
+                self?.confirm?()
+            }
+        } else if !quiet, spaceKey.isRegistered {
+            spaceKey.unregister()
         }
     }
 

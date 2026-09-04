@@ -67,30 +67,36 @@ private func cadenceHotKeyHandler(
 
 final class HotKey {
     private var ref: EventHotKeyRef?
-    private let identifier: UInt32 = 1
+    private let identifier: UInt32
 
-    func register(_ choice: HotKeyChoice, action: @escaping () -> Void) {
+    /// Each hot key needs its own id, or registering one tears down the other.
+    init(identifier: UInt32 = 1) {
+        self.identifier = identifier
+    }
+
+    var isRegistered: Bool { ref != nil }
+
+    /// Raw key code and modifier mask, for chords that are not in the picker.
+    func register(keyCode: UInt32, modifiers: UInt32, action: @escaping () -> Void) {
         unregister()
-
-        if !hotKeyHandlerInstalled {
-            var spec = EventTypeSpec(
-                eventClass: OSType(kEventClassKeyboard),
-                eventKind: UInt32(kEventHotKeyPressed)
-            )
-            InstallEventHandler(GetApplicationEventTarget(), cadenceHotKeyHandler, 1, &spec, nil, nil)
-            hotKeyHandlerInstalled = true
-        }
-
+        installHandler()
         hotKeyActions[identifier] = action
         let id = EventHotKeyID(signature: OSType(0x43414443), id: identifier) // 'CADC'
-        RegisterEventHotKey(
-            choice.keyCode,
-            choice.modifiers,
-            id,
-            GetApplicationEventTarget(),
-            0,
-            &ref
+        RegisterEventHotKey(keyCode, modifiers, id, GetApplicationEventTarget(), 0, &ref)
+    }
+
+    private func installHandler() {
+        guard !hotKeyHandlerInstalled else { return }
+        var spec = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
         )
+        InstallEventHandler(GetApplicationEventTarget(), cadenceHotKeyHandler, 1, &spec, nil, nil)
+        hotKeyHandlerInstalled = true
+    }
+
+    func register(_ choice: HotKeyChoice, action: @escaping () -> Void) {
+        register(keyCode: choice.keyCode, modifiers: choice.modifiers, action: action)
     }
 
     func unregister() {

@@ -48,10 +48,22 @@ struct PillView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button(shownCompanions.isEmpty ? reminder.actionLabel : "Done with all", action: onDone)
-                .buttonStyle(.borderedProminent)
-                .tint(reminder.category.color)
-                .fixedSize()
+            Button(action: onDone) {
+                HStack(spacing: 6) {
+                    Text(shownCompanions.isEmpty ? reminder.actionLabel : "Done with all")
+                    Text("space")
+                        .font(.ui(9, .semibold))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(.black.opacity(0.18))
+                        )
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(reminder.category.color)
+            .fixedSize()
 
             Button("\(reminder.snoozeMinutes)m", action: onSnooze)
                 .buttonStyle(.bordered)
