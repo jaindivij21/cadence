@@ -26,7 +26,8 @@ struct TimeWindow: Codable, Hashable {
         minute >= start && minute <= end
     }
 
-    static let defaultWaking = TimeWindow(start: 8 * 60, end: 23 * 60)
+    /// Used until there is enough history to learn from.
+    static let defaultWork = TimeWindow(start: 10 * 60, end: 18 * 60)
 }
 
 // MARK: - Scheduling
@@ -38,6 +39,9 @@ enum Schedule: Codable, Hashable {
     case timesPerDay(Int)
     /// Fires at these exact clock times.
     case atTimes([MinuteOfDay])
+    /// Fires a set number of minutes before your hours end, and moves with them
+    /// as they are learned. For the thing you do on your way out.
+    case beforeEnd(minutes: Int)
 
     var summary: String {
         switch self {
@@ -47,6 +51,8 @@ enum Schedule: Codable, Hashable {
             return n == 1 ? "once a day" : "\(n)× a day"
         case .atTimes(let times):
             return times.map(\.asClockString).joined(separator: ", ")
+        case .beforeEnd(let minutes):
+            return minutes == 0 ? "as I finish" : "\(minutes)m before I finish"
         }
     }
 }
@@ -55,7 +61,8 @@ enum AlertStyle: Codable, Hashable {
     /// Takes over every screen for `seconds`. Use it when you physically cannot
     /// look at the display anyway (eye breaks, drops).
     case blocking(seconds: Int)
-    /// A card in the corner. `sticky` keeps it until you answer it.
+    /// Drops a pill under the menu bar, which leaves as soon as it is answered.
+    /// `sticky` keeps it there until you do.
     case toast(sticky: Bool)
 
     var isBlocking: Bool {
@@ -66,7 +73,31 @@ enum AlertStyle: Codable, Hashable {
     var summary: String {
         switch self {
         case .blocking(let s):    return "Blocks screen · \(s)s"
-        case .toast(let sticky):  return sticky ? "Corner card · waits for you" : "Corner card"
+        case .toast(let sticky):  return sticky ? "Pill · waits for you" : "Pill · fades"
+        }
+    }
+}
+
+/// When a reminder is allowed to fire.
+///
+/// There is only one window, and it is the time you are at the laptop. A wider
+/// "waking" window was tempting and dishonest: Cadence cannot reach you with
+/// the lid shut, so a drop scheduled for half ten at night was never a reminder
+/// — it was a thing that quietly got marked as assumed the next morning.
+/// Everything is spread across the hours it can actually speak to you.
+enum ScheduleWindow: String, Codable, CaseIterable, Identifiable {
+    /// The hours you are at the laptop.
+    case work
+    /// A fixed time set on the reminder itself. Outside the window this can
+    /// only ever be assumed, never prompted.
+    case custom
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .work:   return "While I'm at the laptop"
+        case .custom: return "A fixed time"
         }
     }
 }
@@ -83,7 +114,9 @@ struct Reminder: Codable, Identifiable, Hashable {
     var alert: AlertStyle
     var enabled: Bool = true
 
-    /// Overrides the global waking window when set.
+    /// Which window this belongs to. `custom` uses `window` below.
+    var appliesDuring: ScheduleWindow = .work
+    /// Only read when `appliesDuring` is `.custom`.
     var window: TimeWindow? = nil
 
     /// For countable reminders (water). `amount` is added to the daily total
@@ -94,10 +127,27 @@ struct Reminder: Codable, Identifiable, Hashable {
 
     var snoozeMinutes: Int = 10
 
+    /// Shifts this reminder's slots off the shared grid, for things that must
+    /// not coincide.
+    var slotOffsetMinutes: Int = 0
+
+    /// Ride on another reminder's timetable instead of spreading independently.
+    /// A drop taken four times a day picks four of the six times you are
+    /// already stopping for the six-times-a-day one, so you are interrupted six
+    /// times rather than twelve.
+    var alignsWith: UUID? = nil
+
     /// Verb on the confirm button, e.g. "Logged", "Done", "Drank 250 ml".
     var actionLabel: String = "Done"
 
     func activeWindow(global: TimeWindow) -> TimeWindow { window ?? global }
+
+    /// Slot times land on the quarter hour. Spreading six drops across a
+    /// fifteen-hour day gives you 11:18 and 2:06, which nobody reads as a time
+    /// they are meant to do something at.
+    static func round(toQuarter minute: MinuteOfDay) -> MinuteOfDay {
+        Int((Double(minute) / 15).rounded()) * 15
+    }
 
     /// The clock times this reminder should fire at today, for slot-based
     /// schedules. Interval schedules return an empty array.
@@ -108,16 +158,22 @@ struct Reminder: Codable, Identifiable, Hashable {
             return []
         case .atTimes(let times):
             return times.sorted()
+        case .beforeEnd(let minutes):
+            return [max(w.start, w.end - minutes)]
         case .timesPerDay(let n):
             guard n > 0 else { return [] }
-            if n == 1 { return [w.start + w.span / 2] }
+            let shift = slotOffsetMinutes
+            if n == 1 { return [Reminder.round(toQuarter: w.start + w.span / 2 + shift)] }
             // Evenly spaced, inset from both edges so nothing lands the second
             // you wake up or the second you go to bed.
             let inset = min(30, w.span / (n * 2))
             let lo = w.start + inset
             let hi = w.end - inset
             let step = Double(hi - lo) / Double(n - 1)
-            return (0..<n).map { lo + Int((Double($0) * step).rounded()) }
+            return (0..<n).map {
+                let raw = min(w.end, lo + shift + Int((Double($0) * step).rounded()))
+                return min(w.end, Reminder.round(toQuarter: raw))
+            }
         }
     }
 }
@@ -126,6 +182,11 @@ struct Reminder: Codable, Identifiable, Hashable {
 
 enum EventKind: String, Codable {
     case done, skipped, missed
+    /// The slot passed while the Mac was asleep, locked or shut. You were
+    /// living your life; Cadence assumes you took it rather than accusing you
+    /// of missing it. Counts as taken, but never adds to a measured total —
+    /// you cannot assume millilitres.
+    case assumed
 }
 
 struct LogEvent: Codable, Identifiable, Hashable {
@@ -136,9 +197,34 @@ struct LogEvent: Codable, Identifiable, Hashable {
     var amount: Double? = nil
 }
 
+/// A stretch when the Mac was asleep, locked or shut.
+struct AwayPeriod: Codable, Hashable {
+    var start: Date
+    var end: Date
+
+    func contains(_ date: Date) -> Bool { date >= start && date <= end }
+}
+
 struct DayLog: Codable {
     var day: String                 // "yyyy-MM-dd"
     var events: [LogEvent] = []
+    /// First and last moment the screen was on and unlocked that day.
+    var firstSeen: Date? = nil
+    var lastSeen: Date? = nil
+    /// When the Mac was not in use, so a slot that passed can be told apart
+    /// from one you were present for and ignored.
+    var away: [AwayPeriod] = []
+    /// Quarter-hour buckets (0..95) the laptop was actually in use. This is how
+    /// the working window is learned: the hours you are usually at it, not the
+    /// one evening you answered an email at eleven.
+    var activeBuckets: [Int] = []
+
+    /// True when the Mac was demonstrably not in use at that moment: inside a
+    /// recorded gap, or before it was first opened today.
+    func wasAway(at date: Date) -> Bool {
+        if let first = firstSeen, date < first { return true }
+        return away.contains { $0.contains(date) }
+    }
 
     func events(for reminder: UUID) -> [LogEvent] {
         events.filter { $0.reminderID == reminder }
@@ -152,6 +238,14 @@ struct DayLog: Codable {
         events.reduce(into: 0) { $0 += ($1.reminderID == reminder && $1.kind == .done ? 1 : 0) }
     }
 
+    /// What the counters show: things you did, plus things that happened while
+    /// the Mac was off.
+    func takenCount(for reminder: UUID) -> Int {
+        events.reduce(into: 0) {
+            $0 += ($1.reminderID == reminder && ($1.kind == .done || $1.kind == .assumed) ? 1 : 0)
+        }
+    }
+
     func total(for reminder: UUID) -> Double {
         events.reduce(into: 0.0) { sum, e in
             if e.reminderID == reminder, e.kind == .done { sum += e.amount ?? 0 }
@@ -162,16 +256,26 @@ struct DayLog: Codable {
 // MARK: - Config
 
 struct Config: Codable {
-    var waking: TimeWindow = .defaultWaking
     var reminders: [Reminder] = Reminder.defaultSet
+    /// Chord that summons the command bar. Never ⌘Space — that is Spotlight's,
+    /// and Cadence has no business taking it.
+    var hotKey: HotKeyChoice = .optionSpace
     var soundEnabled: Bool = true
     var menuBarCountdown: Bool = true
-    /// If you have been away from the keyboard this long, interval reminders
-    /// reset — you already took the break.
-    var idleResetMinutes: Int = 5
     var startAtLogin: Bool = false
     /// How late a missed slot can be before it is written off instead of fired.
     var slotGraceMinutes: Int = 25
+    /// Never interrupt twice inside this. Answering one reminder buys you a
+    /// stretch of quiet before the next can appear.
+    var minimumGapMinutes: Int = 3
+    /// Anything falling due within this of an interruption rides along with it
+    /// instead of arriving on its own a minute later. Drink the water during
+    /// the eye break.
+    var groupWindowMinutes: Int = 12
+    /// The only window: when you are at the laptop. Learned from the hours you
+    /// actually use it, with this as the fallback and the manual override.
+    var work: TimeWindow = TimeWindow(start: 10 * 60, end: 18 * 60)
+    var learnWorkWindow: Bool = true
 }
 
 // MARK: - Defaults
@@ -209,7 +313,7 @@ enum PresetLibrary {
     static var eyeBreak: Reminder {
         Reminder(
             name: "20-20-20 Break",
-            detail: "Look at something about 20 feet away. Blink slowly and fully.",
+            detail: "Let your eyes go long — the furthest thing in the room, or out of a window. Then blink all the way closed a few times; a half blink does nothing.",
             symbol: "eye",
             category: .eye,
             schedule: .everyMinutes(20),
@@ -218,10 +322,22 @@ enum PresetLibrary {
         )
     }
 
+    static var coldCompress: Reminder {
+        Reminder(
+            name: "Cold Compress",
+            detail: "Something cold over closed eyes for a few minutes. It calms swelling and irritation — the opposite job to a warm compress.",
+            symbol: "snowflake",
+            category: .eye,
+            schedule: .timesPerDay(2),
+            alert: .toast(sticky: true),
+            actionLabel: "Done"
+        )
+    }
+
     static var warmCompress: Reminder {
         Reminder(
             name: "Warm Compress",
-            detail: "Warm cloth over closed eyes for five minutes, then a gentle lid massage.",
+            detail: "A warm cloth over closed eyes for five minutes, then a gentle lid massage. Loosens the oil glands along the lash line that a long day of screens shuts down.",
             symbol: "flame.fill",
             category: .eye,
             schedule: .atTimes([21 * 60 + 30]),
@@ -233,7 +349,7 @@ enum PresetLibrary {
     static var distanceFocus: Reminder {
         Reminder(
             name: "Distance Focus",
-            detail: "Find the furthest thing you can see and hold your focus on it for 30 seconds.",
+            detail: "Pick the furthest thing you can see and hold it. Your focusing muscle has been clenched at screen distance for an hour.",
             symbol: "eye.fill",
             category: .eye,
             schedule: .everyMinutes(90),
@@ -242,15 +358,17 @@ enum PresetLibrary {
         )
     }
 
-    // Medication
-    static func doses(_ count: Int) -> Reminder {
+    // Medication. Deliberately says nothing about what you are taking. The
+    // library is for anyone on a schedule; the specifics belong in your own
+    // copy of a reminder, not in what the app ships with.
+    static func medication(_ count: Int) -> Reminder {
         Reminder(
-            name: "Drops · \(count)× daily",
-            detail: "One drop in each eye. Close your eyes and press the inner corner for 30 seconds.",
-            symbol: "drop.fill",
-            category: .eye,
+            name: "Medication · \(count)× a day",
+            detail: "Take it as prescribed.",
+            symbol: "pills.fill",
+            category: .immunity,
             schedule: .timesPerDay(count),
-            alert: .blocking(seconds: 25),
+            alert: .toast(sticky: true),
             actionLabel: "Taken"
         )
     }
@@ -335,10 +453,10 @@ enum PresetLibrary {
     static var supplements: Reminder {
         Reminder(
             name: "Supplements",
-            detail: "Take them with food so they actually absorb.",
+            detail: "With your largest meal, so the fat-soluble ones actually absorb. Keep a few hours clear of any medication — zinc, calcium, magnesium and iron all block absorption.",
             symbol: "cross.vial.fill",
             category: .immunity,
-            schedule: .atTimes([9 * 60 + 30]),
+            schedule: .atTimes([13 * 60 + 30]),
             alert: .toast(sticky: true),
             actionLabel: "Taken"
         )
@@ -420,8 +538,8 @@ enum PresetLibrary {
 
     static var groups: [PresetGroup] {
         [
-            PresetGroup(name: "Screen & eyes", reminders: [eyeBreak, distanceFocus, warmCompress]),
-            PresetGroup(name: "Medication", reminders: [doses(6), doses(4), doses(2), morningMeds, eveningMeds]),
+            PresetGroup(name: "Screen & eyes", reminders: [eyeBreak, distanceFocus, coldCompress, warmCompress]),
+            PresetGroup(name: "Medication", reminders: [morningMeds, eveningMeds, medication(2), medication(3), medication(4), medication(6)]),
             PresetGroup(name: "Hydration", reminders: [water, electrolytes]),
             PresetGroup(name: "Immunity & recovery", reminders: [coldExposure, daylight, supplements, breathwork, screensDown]),
             PresetGroup(name: "Movement", reminders: [standAndMove, postureReset, mobility]),

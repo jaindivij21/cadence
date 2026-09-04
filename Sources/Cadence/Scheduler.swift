@@ -18,6 +18,9 @@ final class Scheduler: ObservableObject {
     /// Sorted soonest first. Reminders finished for the day are left out.
     @Published private(set) var upcoming: [Upcoming] = []
     @Published private(set) var now: Date = Date()
+    /// Something is due but the quiet stretch after the last interruption has
+    /// not run out yet.
+    @Published var heldUntil: Date?
     @Published var pausedUntil: Date? {
         didSet { recompute() }
     }
@@ -25,6 +28,7 @@ final class Scheduler: ObservableObject {
     var onDue: ((Reminder) -> Void)?
 
     private let store: Store
+    let presence = Presence()
     private var timer: Timer?
 
     /// Interval reminders count from here. Reset on launch, on completion, and
@@ -42,12 +46,46 @@ final class Scheduler: ObservableObject {
         for reminder in store.config.reminders where reminder.schedule.isInterval {
             intervalAnchor[reminder.id] = launch
         }
+
+        presence.onReturn = { [weak self] away in
+            self?.cameBack(after: away)
+        }
+        recompute()
+    }
+
+    /// The one window: the hours you are at the laptop.
+    var waking: TimeWindow {
+        store.effectiveWork
+    }
+
+    /// Screen off or locked, so the interval clocks hold rather than run.
+    /// Coming back from a long absence counts as the break itself.
+    private func cameBack(after away: TimeInterval) {
+        if away > 60 {
+            store.noteAway(from: now.addingTimeInterval(-away), to: now)
+        }
+        for reminder in store.config.reminders {
+            guard case .everyMinutes(let minutes) = reminder.schedule,
+                  let anchor = intervalAnchor[reminder.id] else { continue }
+            if away >= Double(minutes) * 60 {
+                intervalAnchor[reminder.id] = now
+            } else {
+                intervalAnchor[reminder.id] = anchor.addingTimeInterval(away)
+            }
+        }
         recompute()
     }
 
     // MARK: - Lifecycle
 
     func start() {
+        // Cadence was not running: the lid was shut, the Mac was off, or it was
+        // quit. Either way nobody was being reminded, so that gap counts as
+        // away rather than as a string of things you ignored.
+        if let last = store.today.lastSeen, Date().timeIntervalSince(last) > 300 {
+            store.noteAway(from: last, to: Date())
+        }
+        presence.start()
         timer?.invalidate()
         let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -58,6 +96,7 @@ final class Scheduler: ObservableObject {
     }
 
     func stop() {
+        presence.stop()
         timer?.invalidate()
         timer = nil
     }
@@ -108,38 +147,33 @@ final class Scheduler: ObservableObject {
     private func tick() {
         now = Date()
         store.ensureToday()
-        resetIdleIntervals()
+        guard presence.isPresent else {
+            // Away: the clocks hold and nothing fires at an empty chair.
+            return
+        }
+        store.noteSeen(now)
         writeOffStaleSlots()
         recompute()
         fireDueReminders()
     }
 
-    /// Seconds since the last keyboard or mouse event.
-    private var idleSeconds: Double {
-        let any = CGEventType(rawValue: ~0) ?? .null
-        return CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: any)
-    }
-
-    private func resetIdleIntervals() {
-        let threshold = Double(store.config.idleResetMinutes) * 60
-        guard threshold > 0, idleSeconds >= threshold else { return }
-        for reminder in store.config.reminders where reminder.schedule.isInterval {
-            intervalAnchor[reminder.id] = now
-        }
-    }
 
     /// A slot that is more than the grace period late is recorded as missed and
     /// skipped, rather than ambushing you three hours after the fact.
     private func writeOffStaleSlots() {
         let grace = Double(store.config.slotGraceMinutes) * 60
         for reminder in store.config.reminders where reminder.enabled && !reminder.schedule.isInterval {
-            let slots = reminder.slots(global: store.config.waking)
+            let slots = store.slots(for: reminder)
             guard !slots.isEmpty else { continue }
             var handled = store.today.handledCount(for: reminder.id)
             while handled < slots.count,
                   let slotDate = date(forMinute: slots[handled]),
                   now.timeIntervalSince(slotDate) > grace {
-                store.log(reminder, kind: .missed, at: slotDate)
+                // If the Mac was off or locked when the slot came round, you
+                // were not ignoring it — you were away from the machine, not
+                // from your own routine.
+                let kind: EventKind = store.today.wasAway(at: slotDate) ? .assumed : .missed
+                store.log(reminder, kind: kind, at: slotDate)
                 handled += 1
             }
         }
@@ -174,7 +208,7 @@ final class Scheduler: ObservableObject {
     /// When this reminder fires next, or nil if it is finished for the day.
     func nextFire(for reminder: Reminder) -> Date? {
         guard reminder.enabled else { return nil }
-        let window = reminder.activeWindow(global: store.config.waking)
+        let window = store.window(for: reminder)
 
         switch reminder.schedule {
         case .everyMinutes(let minutes):
@@ -192,8 +226,8 @@ final class Scheduler: ObservableObject {
             }
             return candidate
 
-        case .timesPerDay, .atTimes:
-            let slots = reminder.slots(global: store.config.waking)
+        case .timesPerDay, .atTimes, .beforeEnd:
+            let slots = store.slots(for: reminder)
             let handled = store.today.handledCount(for: reminder.id)
             guard handled < slots.count else { return nil }
             guard var fire = date(forMinute: slots[handled]) else { return nil }
@@ -210,6 +244,29 @@ final class Scheduler: ObservableObject {
             }
         }
         upcoming = list.sorted { $0.fireAt < $1.fireAt }
+    }
+
+    /// Reminders that fall due close enough to `reminder` to be worth doing on
+    /// the same trip, so one stop covers all of them.
+    func companions(for reminder: Reminder) -> [Reminder] {
+        let window = Double(store.config.groupWindowMinutes) * 60
+        return upcoming
+            .filter { item in
+                guard item.reminder.id != reminder.id,
+                      !inFlight.contains(item.reminder.id) else { return false }
+                let gap = item.fireAt.timeIntervalSince(now)
+                // A second take-over only joins in if it lands on the very same
+                // slot — that is an aligned timetable, not a coincidence.
+                if item.reminder.alert.isBlocking { return gap <= 90 }
+                return gap <= window
+            }
+            .prefix(4)
+            .map(\.reminder)
+    }
+
+    /// Marks companions as handled so they do not fire again on their own.
+    func claim(_ reminders: [Reminder]) {
+        reminders.forEach { inFlight.insert($0.id) }
     }
 
     /// Fire a reminder right now, from the panel.

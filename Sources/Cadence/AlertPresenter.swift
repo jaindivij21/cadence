@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Owns every window that is not the menu bar panel: the full-screen break
-/// overlay and the corner card. Only one alert is on screen at a time —
-/// anything that arrives while another is showing waits in the queue.
+/// Decides how loudly a due reminder arrives and owns the windows that carry
+/// it. Quiet alerts morph the island in place; loud ones take over every
+/// screen. Only one is live at a time — anything else waits in the queue.
 @MainActor
 final class AlertPresenter: ObservableObject {
 
@@ -13,6 +13,9 @@ final class AlertPresenter: ObservableObject {
         @Published var remaining: Int
         @Published var total: Int
         @Published var canDismiss: Bool = false
+        /// Small things worth doing while you are already interrupted.
+        @Published var companions: [Reminder] = []
+        @Published var answeredCompanions: Set<UUID> = []
 
         init(reminder: Reminder, seconds: Int) {
             self.reminder = reminder
@@ -20,47 +23,88 @@ final class AlertPresenter: ObservableObject {
             self.total = max(1, seconds)
         }
 
-        var progress: Double {
-            1 - (Double(remaining) / Double(total))
-        }
+        var progress: Double { 1 - (Double(remaining) / Double(total)) }
     }
 
     @Published private(set) var activeBreak: BreakSession?
-    @Published private(set) var activeToast: Reminder?
+    @Published private(set) var activeQuiet: Reminder?
 
     var onAnswer: ((Reminder, EventKind) -> Void)?
     var onSnooze: ((Reminder, Int) -> Void)?
-    /// Optional "1750 / 3000 ml" style badge shown on the corner card.
+    /// Optional "1750 / 3000 ml" badge shown alongside the name.
     var progressProvider: ((Reminder) -> String?)?
+    /// Called when a full-screen break opens and closes.
+    var onBreakChange: ((Bool) -> Void)?
+    /// Other reminders falling due about now, to be offered in the same breath.
+    var companionProvider: ((Reminder) -> [Reminder])?
+    /// Tells the scheduler those companions are spoken for.
+    var onClaim: (([Reminder]) -> Void)?
+    /// Reports when the queue is being held back, so the interface can say so
+    /// instead of claiming something is due "now" and then doing nothing.
+    var onHold: ((Date?) -> Void)?
     var soundEnabled: Bool = true
 
+    private let pill = PillController()
     private var queue: [Reminder] = []
     private(set) var overlayWindows: [NSWindow] = []
-    private var toastWindow: NSPanel?
     private var breakTimer: Timer?
     private var toastTimer: Timer?
+    /// When the last interruption ended, so the next one cannot tread on it.
+    private var lastAlertEnded: Date?
+    private var quietCompanions: [Reminder] = []
+    private var answeredQuiet: Set<UUID> = []
+    private var cooldownTimer: Timer?
+    /// Quiet stretch owed after any alert. Set from config each time one fires.
+    var minimumGap: TimeInterval = 180
 
     // MARK: - Entry point
 
     func present(_ reminder: Reminder) {
         guard !queue.contains(where: { $0.id == reminder.id }),
               activeBreak?.reminder.id != reminder.id,
-              activeToast?.id != reminder.id
+              activeQuiet?.id != reminder.id
         else { return }
         queue.append(reminder)
         drainQueue()
     }
 
     private func drainQueue() {
-        guard activeBreak == nil, activeToast == nil, !queue.isEmpty else { return }
-        // Blocking alerts jump ahead — they are the ones you physically cannot miss.
-        if let idx = queue.firstIndex(where: { $0.alert.isBlocking }) {
-            let reminder = queue.remove(at: idx)
-            showBreak(reminder)
-        } else {
-            let reminder = queue.removeFirst()
-            showToast(reminder)
+        guard activeBreak == nil, activeQuiet == nil, !queue.isEmpty else { return }
+
+        // Answering one reminder buys a stretch of quiet. Without this the eye
+        // break ends and the water prompt lands twenty seconds later, which is
+        // two interruptions where the point was to have one.
+        if let last = lastAlertEnded {
+            let waited = Date().timeIntervalSince(last)
+            if waited < minimumGap {
+                let remaining = minimumGap - waited
+                onHold?(Date().addingTimeInterval(remaining))
+                scheduleDrain(in: remaining)
+                return
+            }
         }
+        onHold?(nil)
+
+        // Blocking alerts jump the queue — they are the ones you cannot miss.
+        if let idx = queue.firstIndex(where: { $0.alert.isBlocking }) {
+            showBreak(queue.remove(at: idx))
+        } else {
+            showQuiet(queue.removeFirst())
+        }
+    }
+
+    private func scheduleDrain(in seconds: TimeInterval) {
+        cooldownTimer?.invalidate()
+        let timer = Timer(timeInterval: max(1, seconds), repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.drainQueue() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        cooldownTimer = timer
+    }
+
+    /// Clears a reminder that was dismissed without an explicit answer.
+    func release(_ reminderID: UUID) {
+        queue.removeAll { $0.id == reminderID }
     }
 
     // MARK: - Full-screen break
@@ -68,7 +112,10 @@ final class AlertPresenter: ObservableObject {
     private func showBreak(_ reminder: Reminder) {
         guard case .blocking(let seconds) = reminder.alert else { return }
         let session = BreakSession(reminder: reminder, seconds: seconds)
+        session.companions = companionProvider?(reminder) ?? []
+        onClaim?(session.companions)
         activeBreak = session
+        onBreakChange?(true)
 
         for screen in NSScreen.screens {
             let window = KeyableWindow(
@@ -82,15 +129,19 @@ final class AlertPresenter: ObservableObject {
             window.level = .screenSaver
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
             window.hasShadow = false
-            window.ignoresMouseEvents = false
             window.setFrame(screen.frame, display: true)
 
-            let root = BreakOverlayView(
-                session: session,
-                onDone: { [weak self] in self?.finishBreak(kind: .done) },
-                onSkip: { [weak self] in self?.finishBreak(kind: .skipped) }
+            window.contentView = NSHostingView(
+                rootView: BreakOverlayView(
+                    session: session,
+                    onDone: { [weak self] in self?.finishBreak(kind: .done) },
+                    onSkip: { [weak self] in self?.finishBreak(kind: .skipped) },
+                    onCompanion: { [weak self] companion in
+                        session.answeredCompanions.insert(companion.id)
+                        self?.onAnswer?(companion, .done)
+                    }
+                )
             )
-            window.contentView = NSHostingView(rootView: root)
             window.alphaValue = 0
             window.makeKeyAndOrderFront(nil)
             NSAnimationContext.runAnimationGroup { ctx in
@@ -101,10 +152,10 @@ final class AlertPresenter: ObservableObject {
         }
 
         NSApp.activate(ignoringOtherApps: true)
-        playSound(named: "Submarine")
+        play("Submarine")
 
-        // Give a beat before the skip button lights up, so it is a break and not
-        // a reflex click.
+        // A beat before the buttons light up, so it is a break and not a reflex
+        // click.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak session] in
             session?.canDismiss = true
         }
@@ -125,7 +176,7 @@ final class AlertPresenter: ObservableObject {
         breakTimer?.invalidate(); breakTimer = nil
         activeBreak = nil
         onAnswer?(session.reminder, kind)
-        if kind == .done { playSound(named: "Glass") }
+        if kind == .done { play("Glass") }
 
         let windows = overlayWindows
         overlayWindows = []
@@ -136,104 +187,90 @@ final class AlertPresenter: ObservableObject {
             windows.forEach { $0.orderOut(nil) }
         }
 
+        for companion in session.companions where !session.answeredCompanions.contains(companion.id) {
+            onAnswer?(companion, .skipped)
+        }
+
+        onBreakChange?(false)
+        lastAlertEnded = Date()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             self?.drainQueue()
         }
     }
 
-    // MARK: - Corner card
+    // MARK: - Quiet alert
 
-    private func showToast(_ reminder: Reminder) {
-        activeToast = reminder
+    private func showQuiet(_ reminder: Reminder) {
+        activeQuiet = reminder
+        let companions = companionProvider?(reminder) ?? []
+        onClaim?(companions)
+        quietCompanions = companions
+        answeredQuiet = []
 
-        let width: CGFloat = 380
-        let height: CGFloat = 150
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.hasShadow = true
-
-        let root = ToastView(
-            reminder: reminder,
-            progressText: progressProvider?(reminder),
-            onDone: { [weak self] in self?.finishToast(kind: .done) },
-            onSkip: { [weak self] in self?.finishToast(kind: .skipped) },
-            onSnooze: { [weak self] in self?.snoozeToast(minutes: reminder.snoozeMinutes) }
-        )
-        panel.contentView = NSHostingView(rootView: root)
-
-        if let screen = NSScreen.main {
-            let visible = screen.visibleFrame
-            let origin = NSPoint(x: visible.maxX - width - 20, y: visible.maxY - height - 20)
-            panel.setFrameOrigin(NSPoint(x: origin.x + 24, y: origin.y))
-            panel.alphaValue = 0
-            panel.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.28
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                panel.animator().setFrameOrigin(origin)
-                panel.animator().alphaValue = 1
+        pill.show(
+            reminder,
+            progress: progressProvider?(reminder),
+            companions: companions,
+            onDone: { [weak self] in self?.finishQuiet(kind: .done) },
+            onSnooze: { [weak self] in self?.snoozeQuiet(minutes: reminder.snoozeMinutes) },
+            onSkip: { [weak self] in self?.finishQuiet(kind: .skipped) },
+            onCompanion: { [weak self] companion in
+                self?.answeredQuiet.insert(companion.id)
+                self?.onAnswer?(companion, .done)
             }
-        } else {
-            panel.orderFrontRegardless()
-        }
-
-        toastWindow = panel
-        playSound(named: "Tink")
+        )
+        play("Tink")
 
         if case .toast(let sticky) = reminder.alert, !sticky {
             let timer = Timer(timeInterval: 30, repeats: false) { [weak self] _ in
-                Task { @MainActor in self?.finishToast(kind: .missed) }
+                Task { @MainActor in self?.finishQuiet(kind: .missed) }
             }
             RunLoop.main.add(timer, forMode: .common)
             toastTimer = timer
         }
     }
 
-    private func finishToast(kind: EventKind) {
-        guard let reminder = activeToast else { return }
+    private func finishQuiet(kind: EventKind) {
+        guard let reminder = activeQuiet else { return }
         toastTimer?.invalidate(); toastTimer = nil
-        activeToast = nil
+        activeQuiet = nil
         onAnswer?(reminder, kind)
-        dismissToastWindow()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            self?.drainQueue()
-        }
+        closeQuiet()
     }
 
-    private func snoozeToast(minutes: Int) {
-        guard let reminder = activeToast else { return }
+    private func snoozeQuiet(minutes: Int) {
+        guard let reminder = activeQuiet else { return }
         toastTimer?.invalidate(); toastTimer = nil
-        activeToast = nil
+        activeQuiet = nil
         onSnooze?(reminder, minutes)
-        dismissToastWindow()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+        closeQuiet()
+    }
+
+    private func closeQuiet() {
+        for companion in quietCompanions where !answeredQuiet.contains(companion.id) {
+            onAnswer?(companion, .skipped)
+        }
+        quietCompanions = []
+        answeredQuiet = []
+        lastAlertEnded = Date()
+        pill.hide()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.drainQueue()
         }
     }
 
-    private func dismissToastWindow() {
-        guard let panel = toastWindow else { return }
-        toastWindow = nil
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.22
-            panel.animator().alphaValue = 0
-        } completionHandler: {
-            panel.orderOut(nil)
-        }
+    /// Somewhere else answered this reminder — the command bar, the menu bar
+    /// panel — so the pill must come down with it.
+    @discardableResult
+    func answerElsewhere(_ reminder: Reminder, kind: EventKind) -> Bool {
+        guard activeQuiet?.id == reminder.id else { return false }
+        finishQuiet(kind: kind)
+        return true
     }
 
     // MARK: - Sound
 
-    private func playSound(named name: String) {
+    private func play(_ name: String) {
         guard soundEnabled else { return }
         NSSound(named: NSSound.Name(name))?.play()
     }

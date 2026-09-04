@@ -3,13 +3,33 @@
 A quiet reminder app that lives in the macOS menu bar.
 
 Reminders apps are built around lists you have to open. Cadence is built around
-the opposite idea: you should not have to look at it. It sits in the menu bar,
-counts down to the next thing, and interrupts you exactly as hard as that thing
-deserves — a card in the corner for a glass of water, the whole screen for a
-break your eyes actually need.
+the opposite idea: you should not have to look at it. A glass island floats
+above your desktop counting down to the next thing, and interrupts you exactly
+as hard as that thing deserves — it morphs in place to ask about a glass of
+water, and takes over every screen for a break your eyes actually need.
 
-Native Swift and SwiftUI. No Electron, no dependencies, no account, no network.
-Everything is a JSON file in `~/Library/Application Support/Cadence`.
+Native Swift and SwiftUI, built on macOS 26's Liquid Glass. No Electron, no
+dependencies, no account, no network. Everything is a JSON file in
+`~/Library/Application Support/Cadence`.
+
+## The island
+
+A borderless glass panel, draggable anywhere, that stays out of the way:
+
+- **Idle** — a capsule with the next reminder's icon, a ring showing how far
+  through the interval you are, and the countdown.
+- **Hover** — it expands. The name appears, an action button appears, and a
+  squircle opens everything else.
+- **Due** — the same capsule morphs in place into the question, with the answer
+  buttons inline. No second window slides in from the corner.
+- **Counters** — one ringed circle per countable habit, showing how many are
+  left today. Click one to log it.
+
+Built with `GlassEffectContainer` and `glassEffectID`, so the shapes merge and
+separate as one liquid object rather than as separate views appearing.
+
+Turn it off in Settings and everything falls back to a corner card; the menu bar
+item works either way.
 
 ## What it does
 
@@ -23,11 +43,11 @@ Everything is a JSON file in `~/Library/Application Support/Cadence`.
 
 **Two ways to be interrupted**
 
-- **A card in the corner.** Never steals focus. Answer it, snooze it, or let it
+- **Ask in the island.** Never steals focus. Answer it, snooze it, or let it
   fade. Set it to wait until you answer if it matters.
-- **The whole screen.** A dark, blurred take-over with one instruction and a
-  countdown. It clears itself when the timer runs out. Use it for anything you
-  physically cannot do while looking at a display.
+- **The whole screen.** Your desktop, frosted, with one instruction and a
+  countdown floating on it. It clears itself when the timer runs out. Use it for
+  anything you physically cannot do while looking at a display.
 
 **Counting**
 
@@ -50,8 +70,8 @@ supplements, and a screens-down cue at night.
 
 Everything else comes from the preset library in **Settings → Add**:
 
-- **Screen & eyes** — 20-20-20, distance focus, warm compress
-- **Medication** — drops at 6× / 4× / 2× a day, morning and evening doses
+- **Screen & eyes** — 20-20-20, distance focus, cold and warm compress
+- **Medication** — morning and evening doses, or 2× / 3× / 4× / 6× a day
 - **Hydration** — water, electrolytes
 - **Immunity & recovery** — cold exposure, daylight, supplements, breathwork, screens down
 - **Movement** — stand and move, posture reset, mobility
@@ -60,9 +80,16 @@ Everything else comes from the preset library in **Settings → Add**:
 A preset is a normal reminder the moment you add it. Rename it, re-time it,
 change how loudly it interrupts, delete it.
 
+Nothing in the library names a condition or a prescription. "Medication · 4× a
+day" is as specific as it gets; what you are actually taking, and what you need
+to remember about taking it, belongs in your copy of the reminder. The app ships
+knowing nothing about you.
+
 ## Install
 
-Requires macOS 14 or later and the Xcode command line tools.
+Requires macOS 26 (Tahoe) or later and the Xcode command line tools. Cadence is
+built on Liquid Glass, which does not exist before Tahoe, and there is no
+fallback that still looks like this.
 
 ```sh
 git clone https://github.com/jaindivij21/cadence.git
@@ -87,30 +114,28 @@ code in this app at all. Delete the file to start over.
 ## Development
 
 ```sh
-swift build                      # debug build
-swift run Cadence                # run without bundling
-
-.build/release/Cadence --smoke-test              # check window and schedule maths
-.build/release/Cadence --render-previews ./out   # PNG of every screen
+swift build                          # debug build
+swift run Cadence                    # run without bundling
+.build/release/Cadence --smoke-test  # window construction, alert queue, schedule maths
 ```
 
-`--render-previews` exists because the panel and the overlay are hard to review
-by hand. It writes the panel, both settings panes, the break overlay and the
-corner card straight to disk. AppKit-backed controls (switches, steppers, date
-pickers, blur) render as yellow placeholders — `ImageRenderer` cannot draw them,
-and that is expected.
+There is no screenshot mode. Every surface is real system material — Liquid
+Glass, `NavigationSplitView`, `Form` — and none of it renders through
+`ImageRenderer`. The only way to review the look is to run the app.
 
 ### Layout
 
 ```
 Sources/Cadence/
-  CadenceApp.swift      @main, the menu bar scene, wiring
-  Models.swift          Reminder, Schedule, AlertStyle, the preset library
-  Store.swift           JSON persistence and the daily log
-  Scheduler.swift       When things fire, idle detection, missed-slot handling
-  AlertPresenter.swift  Every window that is not the panel
-  Theme.swift           Palette, type scale, shared chrome
-  Views/                Panel, overlay, corner card, settings
+  CadenceApp.swift        @main, the menu bar scene, wiring
+  Models.swift            Reminder, Schedule, AlertStyle, the preset library
+  Store.swift             JSON persistence and the daily log
+  Scheduler.swift         When things fire, idle detection, missed-slot handling
+  AlertPresenter.swift    Routes a due reminder to the island or the whole screen
+  IslandController.swift  The floating panel: placement, resizing, dragging
+  Theme.swift             Palette, type scale, the glass shape vocabulary
+  SmokeTest.swift         --smoke-test
+  Views/                  Island, overlay, corner card, panel, settings
 Tools/makeicon.swift    Draws the app icon, so no binary artwork is committed
 ```
 

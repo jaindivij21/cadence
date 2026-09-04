@@ -1,25 +1,35 @@
 import AppKit
+import Combine
 import SwiftUI
 
-/// Owns the three long-lived objects and wires them together. Nothing else in
-/// the app knows about more than one of them at a time.
+/// Owns the long-lived objects and wires them together. Nothing else in the app
+/// knows about more than one of them at a time.
 @MainActor
 final class AppModel: ObservableObject {
     let store: Store
     let scheduler: Scheduler
     let presenter: AlertPresenter
+    let commandBar: CommandBarController
+
+    /// Set by the app scene so the island and the panel can open Settings.
+    var openSettings: () -> Void = {}
+
+    private var cancellables: Set<AnyCancellable> = []
 
     init() {
         let store = Store()
         let scheduler = Scheduler(store: store)
         let presenter = AlertPresenter()
+        let commandBar = CommandBarController(store: store, scheduler: scheduler)
         self.store = store
         self.scheduler = scheduler
         self.presenter = presenter
+        self.commandBar = commandBar
 
         scheduler.onDue = { [weak store, weak presenter] reminder in
             guard let store, let presenter else { return }
             presenter.soundEnabled = store.config.soundEnabled
+            presenter.minimumGap = Double(store.config.minimumGapMinutes) * 60
             presenter.present(reminder)
         }
 
@@ -32,14 +42,49 @@ final class AppModel: ObservableObject {
             scheduler?.snoozed(reminder, minutes: minutes)
         }
 
+        // Grouping: anything falling due about now rides along with whatever is
+        // already interrupting, rather than arriving on its own a minute later.
+        presenter.companionProvider = { [weak scheduler] reminder in
+            scheduler?.companions(for: reminder) ?? []
+        }
+
+        presenter.onClaim = { [weak scheduler] companions in
+            scheduler?.claim(companions)
+        }
+
+        presenter.onHold = { [weak scheduler] until in
+            scheduler?.heldUntil = until
+        }
+
         presenter.progressProvider = { [weak store] reminder in
             guard let store,
                   let target = reminder.dailyTarget, target > 0,
                   let unit = reminder.unit
             else { return nil }
-            let total = store.today.total(for: reminder.id)
-            return "\(Int(total))/\(Int(target)) \(unit)"
+            return "\(Fmt.amountString(store.today.total(for: reminder.id))) / \(Fmt.amountString(target)) \(unit)"
         }
+
+
+
+
+
+        commandBar.onLog = { [weak self] reminder, kind in
+            guard let self else { return }
+            if !self.presenter.answerElsewhere(reminder, kind: kind) {
+                self.store.log(reminder, kind: kind)
+                self.scheduler.acknowledged(reminder)
+            }
+        }
+        commandBar.onOpenSettings = { [weak self] in self?.openSettings() }
+        commandBar.registerHotKey()
+
+        store.$config
+            .map(\.hotKey)
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak commandBar] _ in commandBar?.registerHotKey() }
+            .store(in: &cancellables)
+
 
         scheduler.start()
     }
@@ -47,11 +92,11 @@ final class AppModel: ObservableObject {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if PreviewRenderer.runIfRequested() {
+        if GlassProbe.runIfRequested() || WindowCapture.runIfRequested() || SmokeTest.runIfRequested() {
             NSApp.terminate(nil)
             return
         }
-        // Menu bar only. No Dock icon, no app switcher entry.
+        // Menu bar and floating island only. No Dock icon, no app switcher entry.
         NSApp.setActivationPolicy(.accessory)
     }
 
@@ -64,12 +109,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct CadenceApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         MenuBarExtra {
-            PanelView()
+            PanelView(onOpenSettings: showSettings)
                 .environmentObject(model.store)
                 .environmentObject(model.scheduler)
+                .onAppear { model.openSettings = showSettings }
         } label: {
             MenuBarLabel(scheduler: model.scheduler, store: model.store)
         }
@@ -80,8 +127,14 @@ struct CadenceApp: App {
                 .environmentObject(model.store)
                 .environmentObject(model.scheduler)
         }
-        .defaultSize(width: 860, height: 620)
+        .defaultSize(width: 900, height: 660)
+        .windowStyle(.hiddenTitleBar)
         .commandsRemoved()
+    }
+
+    private func showSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: "settings")
     }
 }
 
@@ -96,7 +149,7 @@ private struct MenuBarLabel: View {
             Image(systemName: symbol)
             if store.config.menuBarCountdown, let text = countdownText {
                 Text(text)
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .font(.ui(11, .medium))
                     .monospacedDigit()
             }
         }
